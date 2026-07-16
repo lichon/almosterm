@@ -1,6 +1,7 @@
 # Agent
 .pi
 .specify
+nul
 
 # Dependencies
 node_modules/

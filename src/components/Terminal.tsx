@@ -25,15 +25,15 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
   onFileDropRef.current = onFileDrop;
 
   const writeToTerminal = useCallback((data: string) => {
-    xtermRef.current?.write(data);
+    try { xtermRef.current?.write(data); } catch { /* terminal disposed */ }
   }, []);
 
   const writelnToTerminal = useCallback((data: string) => {
-    xtermRef.current?.writeln(data);
+    try { xtermRef.current?.writeln(data); } catch { /* terminal disposed */ }
   }, []);
 
   const clearTerminal = useCallback(() => {
-    xtermRef.current?.clear();
+    try { xtermRef.current?.clear(); } catch { /* terminal disposed */ }
   }, []);
 
   useEffect(() => {
@@ -78,7 +78,11 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
     term.open(terminalRef.current);
     term.focus();
 
-    fitAddon.fit();
+    // Defer the initial fit to ensure the browser has completed layout,
+    // avoiding a race where the renderer's dimensions aren't yet available.
+    requestAnimationFrame(() => {
+      try { fitAddon.fit(); } catch { /* renderer not ready */ }
+    });
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -216,19 +220,23 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
     container.addEventListener('dragleave', onDragLeave);
     container.addEventListener('drop', onDrop);
 
-    // Resize handling
+    // Resize handling — guarded against disposed terminal and wrapped in
+    // try/catch to handle races where xterm's internal renderer has been
+    // torn down (e.g. React StrictMode double-mount or fast unmount).
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      if (xtermRef.current && fitAddonRef.current) {
+        try { fitAddon.fit(); } catch { /* internal dimensions unavailable */ }
+      }
     });
 
     resizeObserver.observe(terminalRef.current);
 
     return () => {
+      resizeObserver.disconnect();
       container.removeEventListener('dragover', onDragOver);
       container.removeEventListener('dragenter', onDragEnter);
       container.removeEventListener('dragleave', onDragLeave);
       container.removeEventListener('drop', onDrop);
-      resizeObserver.disconnect();
       term.dispose();
       xtermRef.current = null;
     };
