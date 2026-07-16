@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useVfsStore } from '../store/vfsStore';
 import { useSessionStore } from '../store/sessionStore';
-import { getContainer } from '../fs/configure';
+import { getContainer, persistVfs } from '../fs/configure';
 
 function getTerminal() {
   return (window as any).__almosterm_terminal;
@@ -75,10 +75,35 @@ export function useCommandExecution() {
       return;
     }
 
+    const container = getContainer();
+    let vfsChanged = false
+    const vfsListener = () => {
+      vfsChanged = true
+    }
+    container.vfs.on('change', vfsListener)
+    container.vfs.on('delete', vfsListener)
     try {
-      const container = getContainer();
       const currentCwd = useVfsStore.getState().cwd;
-      const result = await container.run(trimmed, { cwd: currentCwd });
+
+      // Buffer to deduplicate real-time output from final result
+      let streamedStdout = '';
+      let streamedStderr = '';
+
+      const result = await container.run(trimmed, {
+        cwd: currentCwd,
+        onStdout: (data: string) => {
+          streamedStdout += data;
+          writeOutput(data);
+        },
+        onStderr: (data: string) => {
+          streamedStderr += data;
+          writeOutput(data, 'stderr');
+        },
+      });
+
+      if (vfsChanged) {
+        setTimeout(() => { persistVfs(container.vfs) })
+      }
 
       // Track CWD changes after cd commands
       const isCd = /^cd\b/.test(trimmed);
@@ -89,10 +114,16 @@ export function useCommandExecution() {
         useVfsStore.getState().setCwd(newCwd);
       }
 
-      if (result.stdout) writeOutput(result.stdout);
-      if (result.stderr) writeOutput(result.stderr, 'stderr');
+      // Only write remaining output not already streamed in real time
+      const remainingStdout = result.stdout.slice(streamedStdout.length);
+      const remainingStderr = result.stderr.slice(streamedStderr.length);
+      if (remainingStdout) writeOutput(remainingStdout);
+      if (remainingStderr) writeOutput(remainingStderr, 'stderr');
     } catch (err: any) {
       writeOutput(`Error: ${err.message}\n`, 'stderr');
+    } finally {
+      container.vfs.off('change', vfsListener)
+      container.vfs.off('delete', vfsListener)
     }
 
     writePrompt();

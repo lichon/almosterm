@@ -1,4 +1,5 @@
 import { VirtualFS, createContainer } from 'almostnode';
+import type { VFSSnapshot } from 'almostnode';
 
 const _container = createContainer();
 
@@ -14,6 +15,16 @@ export function getContainer() {
   return _container;
 }
 
+/** Convert base64 string to Uint8Array */
+export function base64ToUint8(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 /**
  * Initialize the VFS with a default Unix-like structure.
  * Only called on first launch when no persisted VFS exists.
@@ -25,10 +36,6 @@ export function populateDefaultVfs(vfs: VirtualFS): void {
     '/tmp',
     '/etc',
     '/bin',
-    '/usr',
-    '/usr/local',
-    '/usr/local/bin',
-    '/usr/share',
     '/var',
   ];
 
@@ -62,15 +69,32 @@ export function loadPersistedVfs(vfs: VirtualFS): boolean {
     const stored = localStorage.getItem('almosterm-vfs-snapshot');
     if (!stored) return false;
 
-    const snapshot = JSON.parse(stored);
-    // Rebuild from snapshot
-    for (const [path, entry] of Object.entries(snapshot.files || {}) as [string, any][]) {
-      const dir = path.substring(0, path.lastIndexOf('/'));
-      if (dir && !vfs.existsSync(dir)) {
-        vfs.mkdirSync(dir, { recursive: true });
-      }
-      if (entry.type === 'file') {
-        vfs.writeFileSync(path, entry.content || '');
+    const snapshot = JSON.parse(stored) as VFSSnapshot;
+    // Sort entries to ensure directories are created before their contents
+    const sortedFiles = snapshot.files
+      .map((entry, i) => ({ entry, depth: entry.path.split('/').length, i }))
+      .sort((a, b) => a.depth - b.depth || a.i - b.i)
+      .map(x => x.entry);
+
+    for (const entry of sortedFiles) {
+      if (entry.path === '/') continue; // Skip root
+
+      if (entry.type === 'directory') {
+        vfs.mkdirSync(entry.path, { recursive: true });
+      } else if (entry.type === 'file') {
+        // Decode base64 content
+        let content: Uint8Array;
+        if (entry.content) {
+          content = base64ToUint8(entry.content);
+        } else {
+          content = new Uint8Array(0);
+        }
+        // Ensure parent directory exists
+        const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+        if (parentPath !== '/' && !vfs.existsSync(parentPath)) {
+          vfs.mkdirSync(parentPath, { recursive: true });
+        }
+        vfs.writeFileSync(entry.path, content);
       }
     }
     return true;
@@ -84,31 +108,10 @@ export function loadPersistedVfs(vfs: VirtualFS): boolean {
  */
 export function persistVfs(vfs: VirtualFS): void {
   try {
-    const files: Record<string, any> = {};
-    collectFiles(vfs, '/', files);
-    const snapshot = { version: 1, savedAt: Date.now(), files };
-    localStorage.setItem('almosterm-vfs-snapshot', JSON.stringify(snapshot));
+    const snapshot = vfs.toSnapshot()
+    const storageObj = { version: 1, savedAt: Date.now(), files: snapshot.files };
+    localStorage.setItem('almosterm-vfs-snapshot', JSON.stringify(storageObj));
   } catch {
     // localStorage may be full
   }
-}
-
-function collectFiles(vfs: VirtualFS, dirPath: string, result: Record<string, any>): void {
-  if (!vfs.existsSync(dirPath)) return;
-  try {
-    const entries = vfs.readdirSync(dirPath);
-    for (const entry of entries) {
-      const fullPath = dirPath === '/' ? `/${entry}` : `${dirPath}/${entry}`;
-      try {
-        const stat = vfs.statSync(fullPath);
-        if (stat.isDirectory()) {
-          result[fullPath] = { type: 'directory' };
-          collectFiles(vfs, fullPath, result);
-        } else {
-          const content = vfs.readFileSync(fullPath, 'utf-8');
-          result[fullPath] = { type: 'file', content, size: stat.size };
-        }
-      } catch { /* skip */ }
-    }
-  } catch { /* skip */ }
 }
