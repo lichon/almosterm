@@ -1,7 +1,7 @@
-import { getVfs } from '../fs/configure';
+import type { IFileSystem } from 'just-bash';
 import { useToolStore } from '../store/toolStore';
 
-/** Built-in commands provided by almostnode's bash runtime */
+/** Built-in commands provided by just-bash's bash runtime */
 const BUILTIN_COMMANDS = [
   'ls', 'cd', 'pwd', 'cat', 'mkdir', 'touch', 'echo',
   'rm', 'cp', 'mv', 'node', 'clear', 'help', 'test',
@@ -33,9 +33,12 @@ export function computeCommonPrefix(strings: string[]): string {
  * If the cursor is on the first word, it completes command names.
  * Otherwise, it completes file/directory paths from the VFS.
  */
-export function getTabCompletions(input: string, cwd: string): { matches: string[]; commonPrefix: string } {
+export async function getTabCompletions(
+  input: string,
+  cwd: string,
+  fs: IFileSystem,
+): Promise<{ matches: string[]; commonPrefix: string }> {
   if (!input) return { matches: [], commonPrefix: '' };
-  const vfs = getVfs();
   const words = input.split(/\s+/);
 
   // Determine if we're completing a command (first word or after pipe/separator)
@@ -52,7 +55,7 @@ export function getTabCompletions(input: string, cwd: string): { matches: string
     return { matches, commonPrefix };
   }
 
-  // --- Path completion (existing logic) ---
+  // --- Path completion ---
   const lastWord = words[words.length - 1] || '';
 
   let searchDir: string;
@@ -71,16 +74,25 @@ export function getTabCompletions(input: string, cwd: string): { matches: string
   }
 
   try {
-    if (!vfs.existsSync(searchDir) || !vfs.statSync(searchDir).isDirectory()) return { matches: [], commonPrefix: '' };
-    const entries = vfs.readdirSync(searchDir);
+    if (!(await fs.exists(searchDir))) return { matches: [], commonPrefix: '' };
+    const stat = await fs.stat(searchDir);
+    if (!stat.isDirectory) return { matches: [], commonPrefix: '' };
+
+    const entries = await fs.readdir(searchDir);
     const showHidden = prefix.startsWith('.');
-    const matches = entries
-      .filter(e => e.startsWith(prefix) && (showHidden || !e.startsWith('.')))
-      .map(e => {
-        const ep = searchDir === '/' ? `/${e}` : `${searchDir}/${e}`;
-        try { return vfs.statSync(ep).isDirectory() ? e + '/' : e; } catch { return e; }
-      })
-      .sort();
+    const matches: string[] = [];
+
+    for (const e of entries.sort()) {
+      if (!e.startsWith(prefix)) continue;
+      if (!showHidden && e.startsWith('.')) continue;
+      const ep = searchDir === '/' ? `/${e}` : `${searchDir}/${e}`;
+      try {
+        const s = await fs.stat(ep);
+        matches.push(s.isDirectory ? e + '/' : e);
+      } catch {
+        matches.push(e);
+      }
+    }
 
     if (!matches.length) return { matches: [], commonPrefix: '' };
     const commonPrefix = computeCommonPrefix(matches);

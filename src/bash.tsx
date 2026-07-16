@@ -2,14 +2,13 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from './components/Terminal';
 import { useCommandExecution } from './hooks/useCommandExecution';
 import { useVfsStore } from './store/vfsStore';
-import { getVfs, persistVfs } from './fs/configure';
 
 /**
  * Bash shell entry component.
  * Wires xterm.js Terminal ↔ just-bash Bash instance.
  */
 const Bash: React.FC = () => {
-  const { handleInput, handleSignal, initializePrompt } = useCommandExecution();
+  const { handleInput, handleSignal, initializePrompt, bash } = useCommandExecution();
   const initializedRef = useRef(false);
 
   useEffect(() => {
@@ -33,15 +32,12 @@ const Bash: React.FC = () => {
   const handleFileDrop = useCallback(async (file: File) => {
     const term = (window as any).__almosterm_terminal;
     const cwd = useVfsStore.getState().cwd;
-    const vfs = getVfs();
-
     const filename = file.name;
     const targetPath = cwd === '/' ? `/${filename}` : `${cwd}/${filename}`;
 
     try {
       const content = await file.text();
-      vfs.writeFileSync(targetPath, content);
-      persistVfs(vfs);
+      await bash.writeFile(targetPath, content);
 
       const sizeFmt = file.size < 1024
         ? `${file.size} B`
@@ -57,7 +53,7 @@ const Bash: React.FC = () => {
         term.writeln(`\r\n\x1b[31m✗ Failed to import ${filename}: ${err.message}\x1b[0m`);
       }
     }
-  }, []);
+  }, [bash]);
 
   return (
     <Terminal
