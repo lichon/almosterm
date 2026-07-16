@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useVfsStore } from '../store/vfsStore';
 import { useSessionStore } from '../store/sessionStore';
 import { getContainer, persistVfs } from '../fs/configure';
+import { getTabCompletions } from './useTabCompletion';
 
 function getTerminal() {
   return (window as any).__almosterm_terminal;
@@ -54,11 +55,12 @@ function resolvePath(cwd: string, target: string): string {
   return '/' + resolved.join('/');
 }
 
-function writePrompt(): void {
+function writePrompt(cmd: string | null = '', reset: boolean = false): void {
   const cwd = useVfsStore.getState().cwd;
   const term = getTerminal();
   if (!term) return;
-  term.write(`\x1b[36muser@almosterm\x1b[0m:\x1b[34m${cwd}\x1b[0m$ `);
+  if (reset) term.write(`\r\x1b[K`);
+  term.write(`\x1b[34m${cwd}\x1b[0m$ ${cmd}`);
 }
 
 export function useCommandExecution() {
@@ -134,15 +136,79 @@ export function useCommandExecution() {
     if (!term) return;
     if (signal === 'ARROW_UP') {
       const cmd = navigateHistory('up');
-      term.write(`\r\x1b[K`);
-      const c = useVfsStore.getState().cwd;
-      term.write(`\x1b[36muser@almosterm\x1b[0m:\x1b[34m${c}\x1b[0m$ ${cmd || ''}`);
+      if (cmd !== null) term.setInput(cmd);
+      writePrompt(cmd, true)
     } else if (signal === 'ARROW_DOWN') {
       const cmd = navigateHistory('down');
-      term.write(`\r\x1b[K`);
-      const c = useVfsStore.getState().cwd;
-      term.write(`\x1b[36muser@almosterm\x1b[0m:\x1b[34m${c}\x1b[0m$ ${cmd || ''}`);
+      if (cmd !== null) term.setInput(cmd);
+      else term.setInput('');
+      writePrompt(cmd, true)
+    } else if (signal === 'TAB') {
+      const input = term.getInput();
+      if (!input) return;
+      const { matches, commonPrefix } = getTabCompletions(input, cwd);
+
+      if (matches.length === 0) {
+        // No completions — do nothing
+        return;
+      }
+
+      if (matches.length === 1) {
+        // Single match — complete the word
+        const words = input.split(/\s+/);
+        const lastWord = words[words.length - 1] || '';
+
+        let completed: string;
+        if (lastWord.includes('/')) {
+          const lastSlash = lastWord.lastIndexOf('/');
+          completed = lastWord.substring(0, lastSlash + 1) + matches[0];
+        } else {
+          completed = matches[0];
+        }
+
+        words[words.length - 1] = completed;
+        const newInput = words.join(' ');
+        term.setInput(newInput);
+
+        // Redraw line
+        writePrompt(newInput, true)
+      } else if (commonPrefix.length > input.split(/\s+/).pop()!.length) {
+        // Multiple matches with common prefix — complete as much as possible
+        const words = input.split(/\s+/);
+        const lastWord = words[words.length - 1] || '';
+
+        let completed: string;
+        if (lastWord.includes('/')) {
+          const lastSlash = lastWord.lastIndexOf('/');
+          completed = lastWord.substring(0, lastSlash + 1) + commonPrefix;
+        } else {
+          completed = commonPrefix;
+        }
+
+        words[words.length - 1] = completed;
+        const newInput = words.join(' ');
+        term.setInput(newInput);
+
+        // Redraw line
+        writePrompt(newInput, true)
+      } else {
+        // Multiple matches, no further common prefix — show options
+        term.writeln('');
+        // Display in columns
+        const maxLen = Math.max(...matches.map(m => m.length));
+        const cols = Math.max(1, Math.floor(80 / (maxLen + 2)));
+        const rows: string[] = [];
+        for (let i = 0; i < matches.length; i += cols) {
+          rows.push(matches.slice(i, i + cols).map(m => m.padEnd(maxLen + 2)).join(''));
+        }
+        for (const row of rows) {
+          term.writeln(`\x1b[90m${row}\x1b[0m`);
+        }
+        // Redraw prompt and input
+        writePrompt(input, true)
+      }
     } else if (signal === 'SIGINT') {
+      term.setInput('');
       writePrompt();
     }
   }, [navigateHistory]);

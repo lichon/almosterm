@@ -246,11 +246,15 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
   // The parent hooks call writeToTerminal via a ref.
   // For now, we expose methods on the window for the hooks.
   useEffect(() => {
-    // Store terminal writer on window for access by hooks
+    // Store terminal writer and input buffer access on window for access by hooks
     (window as any).__almosterm_terminal = {
       write: writeToTerminal,
       writeln: writelnToTerminal,
       clear: clearTerminal,
+      getInput: () => inputBufferRef.current,
+      setInput: (value: string) => {
+        inputBufferRef.current = value;
+      },
     };
     return () => {
       delete (window as any).__almosterm_terminal;
