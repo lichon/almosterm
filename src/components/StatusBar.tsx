@@ -1,7 +1,12 @@
 import React from 'react';
 import { useVfsStore } from '../store/vfsStore';
 
-export const StatusBar: React.FC = () => {
+interface StatusBarProps {
+  onImport?: () => void;
+  onExport?: () => void;
+}
+
+export const StatusBar: React.FC<StatusBarProps> = ({ onImport, onExport }) => {
   const { cwd, totalSize, vfsReady } = useVfsStore();
 
   const formatSize = (bytes: number): string => {
@@ -31,6 +36,44 @@ export const StatusBar: React.FC = () => {
         <span className="status-bar__label">session:</span>
         <span className="status-bar__value">local</span>
       </div>
+      {onImport && (
+        <button
+          className="status-bar__btn"
+          onClick={onImport}
+          title="Import VFS snapshot"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border, #333366)',
+            color: 'var(--text-dim)',
+            padding: '2px 10px',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            marginLeft: '8px',
+          }}
+        >
+          📥 Import
+        </button>
+      )}
+      {onExport && (
+        <button
+          className="status-bar__btn"
+          onClick={onExport}
+          title="Export VFS snapshot"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border, #333366)',
+            color: 'var(--text-dim)',
+            padding: '2px 10px',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            marginLeft: '4px',
+          }}
+        >
+          📤 Export
+        </button>
+      )}
     </div>
   );
 };

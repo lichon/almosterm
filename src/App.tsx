@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useVfsStore } from './store/vfsStore';
 import { useToolStore } from './store/toolStore';
 import { getVfs, populateDefaultVfs, loadPersistedVfs } from './fs/configure';
 import Bash from './bash';
 import { StatusBar } from './components/StatusBar';
+import { ImportDialog } from './components/ImportDialog';
 import './styles/terminal.css';
 
 const App: React.FC = () => {
@@ -11,6 +12,43 @@ const App: React.FC = () => {
   const loadTools = useToolStore((s) => s.loadFromStorage);
   const [initError, setInitError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [importOpen, setImportOpen] = useState(false);
+
+  const handleExport = useCallback(() => {
+    const vfs = getVfs();
+    const files: Record<string, any> = {};
+    collectFiles(vfs, '/', files);
+    const snapshot = { version: 1, exportedAt: new Date().toISOString(), files };
+    const json = JSON.stringify(snapshot, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const dateStr = new Date().toISOString().split('T')[0];
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `almosterm-vfs-${dateStr}.vfs.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  function collectFiles(vfs: ReturnType<typeof getVfs>, dir: string, result: Record<string, any>): void {
+    if (!vfs.existsSync(dir)) return;
+    try {
+      for (const entry of vfs.readdirSync(dir)) {
+        const fp = dir === '/' ? `/${entry}` : `${dir}/${entry}`;
+        try {
+          const stat = vfs.statSync(fp);
+          if (stat.isDirectory()) {
+            result[fp] = { type: 'directory' };
+            collectFiles(vfs, fp, result);
+          } else {
+            result[fp] = { type: 'file', content: vfs.readFileSync(fp, 'utf-8'), size: stat.size };
+          }
+        } catch {}
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     async function init() {
@@ -42,7 +80,11 @@ const App: React.FC = () => {
   return (
     <div className="app-container">
       <div className="terminal-wrapper"><Bash /></div>
-      <StatusBar />
+      <StatusBar
+        onImport={() => setImportOpen(true)}
+        onExport={handleExport}
+      />
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 };

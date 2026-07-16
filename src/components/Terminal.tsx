@@ -7,19 +7,22 @@ import 'xterm/css/xterm.css';
 interface TerminalComponentProps {
   onInput?: (data: string) => void;
   onSignal?: (signal: string) => void;
+  onFileDrop?: (file: File) => void;
 }
 
-export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal }) => {
+export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, onFileDrop }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const inputBufferRef = useRef<string>('');
   const onInputRef = useRef(onInput);
   const onSignalRef = useRef(onSignal);
+  const onFileDropRef = useRef(onFileDrop);
 
   // Keep callback refs current
   onInputRef.current = onInput;
   onSignalRef.current = onSignal;
+  onFileDropRef.current = onFileDrop;
 
   const writeToTerminal = useCallback((data: string) => {
     xtermRef.current?.write(data);
@@ -163,6 +166,56 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal }
       term.write(data);
     });
 
+    // Drag-and-drop file support
+    const container = terminalRef.current;
+    let dragCounter = 0;
+
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      if (dragCounter === 1) {
+        container.style.outline = '2px dashed #00e5ff';
+        container.style.outlineOffset = '-4px';
+      }
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter === 0) {
+        container.style.outline = '';
+        container.style.outlineOffset = '';
+      }
+    };
+
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      container.style.outline = '';
+      container.style.outlineOffset = '';
+
+      const file = e.dataTransfer?.files?.[0];
+      if (file && onFileDropRef.current) {
+        onFileDropRef.current(file);
+      }
+    };
+
+    container.addEventListener('dragover', onDragOver);
+    container.addEventListener('dragenter', onDragEnter);
+    container.addEventListener('dragleave', onDragLeave);
+    container.addEventListener('drop', onDrop);
+
     // Resize handling
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
@@ -171,6 +224,10 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal }
     resizeObserver.observe(terminalRef.current);
 
     return () => {
+      container.removeEventListener('dragover', onDragOver);
+      container.removeEventListener('dragenter', onDragEnter);
+      container.removeEventListener('dragleave', onDragLeave);
+      container.removeEventListener('drop', onDrop);
       resizeObserver.disconnect();
       term.dispose();
       xtermRef.current = null;
