@@ -2,6 +2,20 @@ import { getVfs } from '../../fs/configure';
 import { useVfsStore } from '../../store/vfsStore';
 import type { CommandHandler } from '../types';
 
+/** Resolve . and .. segments in a path */
+function normalizePath(input: string): string {
+  const segments = input.replace(/\/+/g, '/').replace(/\/$/, '').split('/').filter(Boolean);
+  const resolved: string[] = [];
+  for (const seg of segments) {
+    if (seg === '..') {
+      resolved.pop();
+    } else if (seg !== '.') {
+      resolved.push(seg);
+    }
+  }
+  return '/' + resolved.join('/');
+}
+
 export const cdHandler: CommandHandler = async (args, cwd) => {
   try {
     const vfs = getVfs();
@@ -9,10 +23,11 @@ export const cdHandler: CommandHandler = async (args, cwd) => {
 
     if (args.length === 0) {
       target = '/home/user';
+    } else if (args[0] === '/') {
+      target = '/';
     } else {
-      target = args[0].startsWith('/') ? args[0] : (cwd === '/' ? `/${args[0]}` : `${cwd}/${args[0]}`);
-      // Normalize path
-      target = target.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+      const raw = args[0].startsWith('/') ? args[0] : `${cwd}/${args[0]}`;
+      target = normalizePath(raw);
     }
 
     if (!vfs.existsSync(target)) {

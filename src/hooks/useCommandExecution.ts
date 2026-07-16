@@ -5,6 +5,7 @@ import { useVfsStore } from '../store/vfsStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useToolStore } from '../store/toolStore';
 import { getVfs, persistVfs } from '../fs/configure';
+import { executeAndCapture } from '../commands/execute-helper';
 import { lsHandler } from '../commands/builtins/ls';
 import { cdHandler } from '../commands/builtins/cd';
 import { pwdHandler } from '../commands/builtins/pwd';
@@ -21,6 +22,7 @@ import { toolListHandler } from '../commands/builtins/tool-list';
 import { vfsExportHandler, vfsImportHandler } from '../commands/builtins/vfs-export';
 import { clearHandler } from '../commands/builtins/clear';
 import { helpHandler } from '../commands/builtins/help';
+import { testHandler } from '../commands/builtins/test';
 
 function registerBuiltins(): void {
   registry.register('ls', lsHandler);
@@ -41,6 +43,7 @@ function registerBuiltins(): void {
   registry.register('vfs-import', vfsImportHandler);
   registry.register('clear', clearHandler);
   registry.register('help', helpHandler);
+  registry.register('test', testHandler);
 
   // Custom tool resolver
   registry.addCustomResolver((name: string) => {
@@ -52,9 +55,7 @@ function registerBuiltins(): void {
       const code = scriptContent || (vfsPath && getVfs().existsSync(vfsPath) ? getVfs().readFileSync(vfsPath, 'utf-8') : null);
       if (!code) return { stdout: '', stderr: `${name}: tool not found\n`, exitCode: 1 };
       try {
-        const { execute } = await import('almostnode');
-        const result = await execute(code, { cwd });
-        return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
+        return executeAndCapture(code, getVfs(), cwd);
       } catch (err: any) {
         return { stdout: '', stderr: `${name}: ${err.message}\n`, exitCode: 1 };
       }

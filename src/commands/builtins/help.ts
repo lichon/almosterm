@@ -31,6 +31,7 @@ export const helpHandler: CommandHandler = async (args, _cwd) => {
       'tool-list': 'tool-list - List registered custom tools\nUsage: tool-list',
       'vfs-export': 'vfs-export - Export VFS to downloadable snapshot\nUsage: vfs-export [path]',
       'vfs-import': 'vfs-import - Import VFS from snapshot file\nUsage: vfs-import <file>',
+      test: 'test - Test almostnode runtime components\nUsage: test [npm|node|all]\n  test npm [pkg]  Test npm install + require (default: is-odd)\n  test node       Test builtins, require, async/await\n  test all        Run full self-test (VFS + node + npm)',
     };
 
     return { stdout: helpTexts[cmdName] || `No detailed help for '${cmdName}'\n`, stderr: '', exitCode: 0 };

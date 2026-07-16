@@ -1,15 +1,6 @@
 import { getVfs } from '../../fs/configure';
 import type { CommandHandler } from '../types';
-
-// Lazy-load almostnode execute
-let _execute: any = null;
-async function getExecute() {
-  if (!_execute) {
-    const mod = await import('almostnode');
-    _execute = mod.execute;
-  }
-  return _execute;
-}
+import { executeAndCapture } from '../execute-helper';
 
 export const nodeHandler: CommandHandler = async (args, cwd) => {
   try {
@@ -22,14 +13,8 @@ export const nodeHandler: CommandHandler = async (args, cwd) => {
     const eIndex = args.indexOf('-e');
     if (eIndex !== -1 && eIndex + 1 < args.length) {
       const code = args[eIndex + 1];
-      try {
-        const execute = await getExecute();
-        const vfs = getVfs();
-        const result = await execute(code, vfs, { cwd });
-        return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
-      } catch (err: any) {
-        return { stdout: '', stderr: `node: ${err.message}\n`, exitCode: 1 };
-      }
+      const vfs = getVfs();
+      return executeAndCapture(code, vfs, cwd);
     }
 
     // node <script> - read from VFS and execute
@@ -45,13 +30,7 @@ export const nodeHandler: CommandHandler = async (args, cwd) => {
       const scriptContent = vfs.readFileSync(scriptPath, 'utf-8');
       const scriptDir = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
 
-      try {
-        const execute = await getExecute();
-        const result = await execute(scriptContent, vfs, { cwd: scriptDir });
-        return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
-      } catch (err: any) {
-        return { stdout: '', stderr: `node: ${err.message}\n`, exitCode: 1 };
-      }
+      return executeAndCapture(scriptContent, vfs, scriptDir);
     }
 
     return {

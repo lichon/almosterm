@@ -8,6 +8,7 @@ const RESERVED_NAMES = new Set([
   'cd', 'ls', 'pwd', 'cat', 'echo', 'mkdir', 'touch',
   'rm', 'cp', 'mv', 'clear', 'help',
   'vfs-export', 'vfs-import',
+  'test',
   'tool-register', 'tool-unregister', 'tool-list',
 ]);
 
