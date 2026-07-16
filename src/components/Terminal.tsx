@@ -100,7 +100,7 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
         term.write('\r\n');
         const command = inputBufferRef.current;
         inputBufferRef.current = '';
-        if (onInputRef.current && command.trim()) {
+        if (onInputRef.current) {
           onInputRef.current(command);
         }
         return;

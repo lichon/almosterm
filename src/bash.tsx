@@ -5,26 +5,24 @@ import { useVfsStore } from './store/vfsStore';
 import { getVfs, persistVfs } from './fs/configure';
 
 /**
- * Bash shell entry component ("just-bash").
- * Wraps the Terminal and wires up command execution.
+ * Bash shell entry component.
+ * Wires xterm.js Terminal ↔ just-bash Bash instance.
  */
 const Bash: React.FC = () => {
-  const { handleInput, handleSignal, initializePrompt, registerBuiltins } = useCommandExecution();
+  const { handleInput, handleSignal, initializePrompt } = useCommandExecution();
   const initializedRef = useRef(false);
 
   useEffect(() => {
     if (!initializedRef.current) {
-      // Register all built-in command handlers
-      registerBuiltins();
       initializedRef.current = true;
 
       // Show welcome message and prompt
       const term = (window as any).__almosterm_terminal;
       if (term) {
         term.writeln('╔══════════════════════════════════════════╗');
-        term.writeln('║         almosterm v0.1.0                 ║');
+        term.writeln('║         almosterm v0.2.0                 ║');
         term.writeln('║  Local Virtual File System Terminal      ║');
-        term.writeln('║  Type \'help\' for available commands    ║');
+        term.writeln("║  Type 'help' for available commands      ║");
         term.writeln('╚══════════════════════════════════════════╝');
       }
 
@@ -37,12 +35,10 @@ const Bash: React.FC = () => {
     const cwd = useVfsStore.getState().cwd;
     const vfs = getVfs();
 
-    // Build target path: cwd + filename, avoiding duplicate slashes
     const filename = file.name;
     const targetPath = cwd === '/' ? `/${filename}` : `${cwd}/${filename}`;
 
     try {
-      // Read file as text
       const content = await file.text();
       vfs.writeFileSync(targetPath, content);
       persistVfs(vfs);

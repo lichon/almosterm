@@ -1,16 +1,17 @@
-import { VirtualFS } from 'almostnode';
+import { VirtualFS, createContainer } from 'almostnode';
 
-let _vfs: VirtualFS | null = null;
+const _container = createContainer();
 
 /**
  * Get the singleton VirtualFS instance (from almostnode).
  * Creates it on first call with default structure.
  */
 export function getVfs(): VirtualFS {
-  if (!_vfs) {
-    _vfs = new VirtualFS();
-  }
-  return _vfs;
+  return _container.vfs;
+}
+
+export function getContainer() {
+  return _container;
 }
 
 /**
