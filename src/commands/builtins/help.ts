@@ -32,6 +32,8 @@ export const helpHandler: CommandHandler = async (args, _cwd) => {
       'vfs-export': 'vfs-export - Export VFS to downloadable snapshot\nUsage: vfs-export [path]',
       'vfs-import': 'vfs-import - Import VFS from snapshot file\nUsage: vfs-import <file>',
       test: 'test - Test almostnode runtime components\nUsage: test [npm|node|all]\n  test npm [pkg]  Test npm install + require (default: is-odd)\n  test node       Test builtins, require, async/await\n  test all        Run full self-test (VFS + node + npm)',
+      paste: 'paste - Paste clipboard content to a file\nUsage: paste [filename]\n  paste           Write clipboard to pasted-<timestamp>.txt\n  paste notes.md  Write clipboard to notes.md (avoids overwrite)',
+      reload: 'reload - Reload the web page\nUsage: reload',
     };
 
     return { stdout: helpTexts[cmdName] || `No detailed help for '${cmdName}'\n`, stderr: '', exitCode: 0 };

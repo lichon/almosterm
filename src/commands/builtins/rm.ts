@@ -1,12 +1,24 @@
 import { getVfs } from '../../fs/configure';
 import type { CommandHandler } from '../types';
+import { expandGlob } from '../glob';
 
 export const rmHandler: CommandHandler = async (args, cwd) => {
   const vfs = getVfs();
   if (args.length === 0) return { stdout: '', stderr: 'rm: missing operand\n', exitCode: 1 };
   const recursive = args.includes('-r') || args.includes('-rf');
   const force = args.includes('-f') || args.includes('-rf');
-  const targets = args.filter(a => !a.startsWith('-'));
+  const rawTargets = args.filter(a => !a.startsWith('-'));
+
+  // Expand glob patterns
+  const targets: string[] = [];
+  for (const t of rawTargets) {
+    targets.push(...expandGlob(vfs, t, cwd));
+  }
+
+  if (targets.length === 0) {
+    if (force) return { stdout: '', stderr: '', exitCode: 0 };
+    return { stdout: '', stderr: 'rm: missing operand\n', exitCode: 1 };
+  }
 
   for (const arg of targets) {
     const tp = arg.startsWith('/') ? arg : (cwd === '/' ? `/${arg}` : `${cwd}/${arg}`);

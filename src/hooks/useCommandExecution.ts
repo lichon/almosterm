@@ -23,6 +23,8 @@ import { vfsExportHandler, vfsImportHandler } from '../commands/builtins/vfs-exp
 import { clearHandler } from '../commands/builtins/clear';
 import { helpHandler } from '../commands/builtins/help';
 import { testHandler } from '../commands/builtins/test';
+import { pasteHandler } from '../commands/builtins/paste';
+import { reloadHandler } from '../commands/builtins/reload';
 
 function registerBuiltins(): void {
   registry.register('ls', lsHandler);
@@ -44,6 +46,8 @@ function registerBuiltins(): void {
   registry.register('clear', clearHandler);
   registry.register('help', helpHandler);
   registry.register('test', testHandler);
+  registry.register('paste', pasteHandler);
+  registry.register('reload', reloadHandler);
 
   // Custom tool resolver
   registry.addCustomResolver((name: string) => {

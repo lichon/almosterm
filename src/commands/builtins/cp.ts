@@ -1,11 +1,17 @@
 import { getVfs } from '../../fs/configure';
 import type { CommandHandler } from '../types';
+import { expandGlob } from '../glob';
 
 export const cpHandler: CommandHandler = async (args, cwd) => {
   const vfs = getVfs();
-  const targets = args.filter(a => !a.startsWith('-'));
-  if (targets.length < 2) return { stdout: '', stderr: 'cp: missing file operand\n', exitCode: 1 };
-  const dest = targets.pop()!;
+  const rawTargets = args.filter(a => !a.startsWith('-'));
+  if (rawTargets.length < 2) return { stdout: '', stderr: 'cp: missing file operand\n', exitCode: 1 };
+  const dest = rawTargets.pop()!;
+  // Expand globs in sources (not destination)
+  const targets: string[] = [];
+  for (const t of rawTargets) {
+    targets.push(...expandGlob(vfs, t, cwd));
+  }
   const destPath = dest.startsWith('/') ? dest : (cwd === '/' ? `/${dest}` : `${cwd}/${dest}`);
   const recursive = args.includes('-r');
 

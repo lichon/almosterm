@@ -1,5 +1,6 @@
 import { getVfs } from '../../fs/configure';
 import type { CommandHandler } from '../types';
+import { expandGlob } from '../glob';
 
 export const catHandler: CommandHandler = async (args, cwd) => {
   try {
@@ -9,10 +10,13 @@ export const catHandler: CommandHandler = async (args, cwd) => {
     const results: string[] = [];
     for (const arg of args) {
       if (arg.startsWith('-')) continue;
-      const fp = arg.startsWith('/') ? arg : (cwd === '/' ? `/${arg}` : `${cwd}/${arg}`);
-      if (!vfs.existsSync(fp)) return { stdout: '', stderr: `cat: ${arg}: No such file or directory\n`, exitCode: 1 };
-      if (vfs.statSync(fp).isDirectory()) return { stdout: '', stderr: `cat: ${arg}: Is a directory\n`, exitCode: 1 };
-      results.push(vfs.readFileSync(fp, 'utf-8'));
+      const expanded = expandGlob(vfs, arg, cwd);
+      for (const match of expanded) {
+        const fp = match.startsWith('/') ? match : (cwd === '/' ? `/${match}` : `${cwd}/${match}`);
+        if (!vfs.existsSync(fp)) return { stdout: '', stderr: `cat: ${match}: No such file or directory\n`, exitCode: 1 };
+        if (vfs.statSync(fp).isDirectory()) return { stdout: '', stderr: `cat: ${match}: Is a directory\n`, exitCode: 1 };
+        results.push(vfs.readFileSync(fp, 'utf-8'));
+      }
     }
 
     const out = (results.join('') || '') + '\n';

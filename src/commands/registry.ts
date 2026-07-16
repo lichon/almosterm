@@ -6,7 +6,7 @@ import type { CommandHandler } from './types';
 const RESERVED_NAMES = new Set([
   'node', 'npx', 'npm', 'bash', 'sh', 'zsh', 'fish',
   'cd', 'ls', 'pwd', 'cat', 'echo', 'mkdir', 'touch',
-  'rm', 'cp', 'mv', 'clear', 'help',
+  'rm', 'cp', 'mv', 'clear', 'help', 'paste', 'reload',
   'vfs-export', 'vfs-import',
   'test',
   'tool-register', 'tool-unregister', 'tool-list',
