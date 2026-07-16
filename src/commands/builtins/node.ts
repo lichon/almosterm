@@ -15,7 +15,7 @@ export const nodeHandler: CommandHandler = async (args, cwd) => {
   try {
     // node --version / node -v
     if (args.includes('--version') || args.includes('-v')) {
-      return { stdout: 'almostnode v1.0.0\n', stderr: '', exitCode: 0 };
+      return { stdout: 'almostnode v0.0.0\n', stderr: '', exitCode: 0 };
     }
 
     // node -e "<code>"
@@ -24,7 +24,8 @@ export const nodeHandler: CommandHandler = async (args, cwd) => {
       const code = args[eIndex + 1];
       try {
         const execute = await getExecute();
-        const result = await execute(code, { cwd });
+        const vfs = getVfs();
+        const result = await execute(code, vfs, { cwd });
         return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
       } catch (err: any) {
         return { stdout: '', stderr: `node: ${err.message}\n`, exitCode: 1 };
@@ -46,7 +47,7 @@ export const nodeHandler: CommandHandler = async (args, cwd) => {
 
       try {
         const execute = await getExecute();
-        const result = await execute(scriptContent, { cwd: scriptDir });
+        const result = await execute(scriptContent, vfs, { cwd: scriptDir });
         return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
       } catch (err: any) {
         return { stdout: '', stderr: `node: ${err.message}\n`, exitCode: 1 };

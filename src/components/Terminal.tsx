@@ -73,6 +73,7 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal }
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
     term.open(terminalRef.current);
+    term.focus();
 
     fitAddon.fit();
 
