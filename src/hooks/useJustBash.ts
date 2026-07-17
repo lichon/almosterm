@@ -184,7 +184,7 @@ export function useJustBash(options?: {
       files: options?.files,
       fs: options?.fs ?? _vfsAdapter,
       customCommands: [cmdv, node, npm, reload, ...(options?.customCommands ?? [])],
-      env: options?.env ?? { sdf: 'sdf' },
+      env: options?.env ?? { HOME: '/home/user' },
       cwd: options?.cwd ?? '/home/user',
     });
   }

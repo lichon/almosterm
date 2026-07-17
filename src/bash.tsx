@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from './components/Terminal';
 import { useCommandExecution } from './hooks/useCommandExecution';
 import { useVfsStore } from './store/vfsStore';
+import { getTerminal } from './utils';
 
 /**
  * Bash shell entry component.
@@ -16,7 +17,7 @@ const Bash: React.FC = () => {
       initializedRef.current = true;
 
       // Show welcome message and prompt
-      const term = (window as any).__almosterm_terminal;
+      const term = getTerminal();
       if (term) {
         term.writeln('╔══════════════════════════════════════════╗');
         term.writeln('║         almosterm v0.2.0                 ║');
@@ -30,7 +31,7 @@ const Bash: React.FC = () => {
   }, []);
 
   const handleFileDrop = useCallback(async (file: File) => {
-    const term = (window as any).__almosterm_terminal;
+    const term = getTerminal();
     const cwd = useVfsStore.getState().cwd;
     const filename = file.name;
     const targetPath = cwd === '/' ? `/${filename}` : `${cwd}/${filename}`;

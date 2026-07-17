@@ -1,24 +1,6 @@
 import { defineCommand } from 'just-bash';
 import { getContainer } from '../fs/configure';
-
-/** Normalize LF to CRLF for proper xterm rendering */
-function normalizeEol(data: string): string {
-  return data.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
-}
-
-function getTerminal() {
-  return (window as any).__almosterm_terminal;
-}
-
-/** Write a chunk directly to the terminal (streaming output) */
-function writeTerm(data: string, stream: 'stdout' | 'stderr' = 'stdout'): void {
-  const term = getTerminal();
-  if (!term || !data) return;
-  let text = normalizeEol(data);
-  if (!text.endsWith('\r\n')) text += '\r\n';
-  if (stream === 'stderr') term.write(`\x1b[31m${text}\x1b[0m`);
-  else term.write(text);
-}
+import { writeTerm } from '../utils';
 
 /**
  * node — run JavaScript files via the almostnode container.

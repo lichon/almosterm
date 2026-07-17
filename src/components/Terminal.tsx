@@ -3,6 +3,7 @@ import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
+import { setTerminal } from '../utils';
 
 interface TerminalComponentProps {
   onInput?: (data: string) => void;
@@ -247,7 +248,7 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
   // For now, we expose methods on the window for the hooks.
   useEffect(() => {
     // Store terminal writer and input buffer access on window for access by hooks
-    (window as any).__almosterm_terminal = {
+    setTerminal({
       write: writeToTerminal,
       writeln: writelnToTerminal,
       clear: clearTerminal,
@@ -255,9 +256,9 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
       setInput: (value: string) => {
         inputBufferRef.current = value;
       },
-    };
+    });
     return () => {
-      delete (window as any).__almosterm_terminal;
+      setTerminal(null);
     };
   }, [writeToTerminal, writelnToTerminal, clearTerminal]);
 

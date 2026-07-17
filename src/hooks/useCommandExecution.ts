@@ -4,24 +4,7 @@ import { useSessionStore } from '../store/sessionStore';
 import { useJustBash } from './useJustBash';
 import { persistVfs, getVfs } from '../fs/configure';
 import { getTabCompletions } from './useTabCompletion';
-
-function getTerminal() {
-  return (window as any).__almosterm_terminal;
-}
-
-/** Normalize LF to CRLF so xterm renders properly without staircasing */
-function normalizeEol(data: string): string {
-  return data.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
-}
-
-function writeOutput(data: string, stream: 'stdout' | 'stderr' = 'stdout'): void {
-  const term = getTerminal();
-  if (!term || !data) return;
-  let text = normalizeEol(data);
-  if (!text.endsWith('\r\n')) text += '\r\n';
-  if (stream === 'stderr') term.write(`\x1b[31m${text}\x1b[0m`);
-  else term.write(text);
-}
+import { getTerminal, writeTerm } from '../utils';
 
 function writePrompt(cmd: string | null = '', reset: boolean = false): void {
   const cwd = useVfsStore.getState().cwd;
@@ -57,8 +40,8 @@ export function useCommandExecution() {
       const result = await exec(trimmed, { cwd: currentCwd });
 
       // Write stdout/stderr
-      if (result.stdout) writeOutput(result.stdout);
-      if (result.stderr) writeOutput(result.stderr, 'stderr');
+      if (result.stdout) writeTerm(result.stdout);
+      if (result.stderr) writeTerm(result.stderr, 'stderr');
 
       // Sync CWD and persist VFS only when mutated
       useVfsStore.getState().setCwd(bash.getCwd());
@@ -66,7 +49,7 @@ export function useCommandExecution() {
         setTimeout(() => persistVfs(vfs));
       }
     } catch (err: any) {
-      writeOutput(`Error: ${err.message}\n`, 'stderr');
+      writeTerm(`Error: ${err.message}\n`, 'stderr');
     } finally {
       vfs.off('change', onVfsChange);
       vfs.off('delete', onVfsChange);
