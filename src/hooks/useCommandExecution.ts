@@ -11,7 +11,8 @@ function writePrompt(cmd: string | null = '', reset: boolean = false): void {
   const term = getTerminal();
   if (!term) return;
   if (reset) term.write(`\r\x1b[K`);
-  term.write(`\x1b[34m${cwd}\x1b[0m$ ${cmd}`);
+  const displayCwd = cwd.replace(/^\/home\/user/, "~") || "/";
+  term.write(`\x1b[34m${displayCwd}\x1b[0m$ ${cmd}`);
 }
 
 export function useCommandExecution() {
@@ -44,7 +45,7 @@ export function useCommandExecution() {
       if (result.stderr) writeTerm(result.stderr, 'stderr');
 
       // Sync CWD and persist VFS only when mutated
-      useVfsStore.getState().setCwd(bash.getCwd());
+      useVfsStore.getState().setCwd(result.env['PWD'] || '/');
       if (vfsChanged) {
         setTimeout(() => persistVfs(vfs));
       }
