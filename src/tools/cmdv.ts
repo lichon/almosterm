@@ -5,12 +5,14 @@ import { defineCommand } from 'just-bash';
  *
  * Usage:
  *   cmdv <filepath>    write clipboard content to <filepath>
- *   cmdv               write to default path (/home/user/clipboard.txt)
+ *   cmdv               write to default path ($CWD/clipboard.txt)
  *
  * If the clipboard is empty or inaccessible, a default placeholder is written.
  */
 export const cmdv = defineCommand('cmdv', async (args, ctx) => {
-  const filepath = args[0] || '/home/user/clipboard.txt';
+  const filepath = args[0]
+    ? (args[0].startsWith('/') ? args[0] : `${ctx.cwd.replace(/\/$/, '')}/${args[0]}`)
+    : `${ctx.cwd}/clipboard.txt`;
 
   let content: string;
   try {
