@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useVfsStore } from '../store/vfsStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useJustBash } from './useJustBash';
+import { persistVfs, getVfs } from '../fs/configure';
 import { getTabCompletions } from './useTabCompletion';
 
 function getTerminal() {
@@ -32,7 +33,6 @@ function writePrompt(cmd: string | null = '', reset: boolean = false): void {
 
 export function useCommandExecution() {
   const { bash, exec } = useJustBash();
-  const cwd = useVfsStore.getState().cwd;
   const { addToHistory, navigateHistory, resetHistoryNavigation } = useSessionStore();
 
   const handleInput = useCallback(async (command: string) => {
@@ -45,6 +45,13 @@ export function useCommandExecution() {
       return;
     }
 
+    // Listen for VFS mutations from any source (adapter, container, node, etc.)
+    let vfsChanged = false;
+    const onVfsChange = () => { vfsChanged = true; };
+    const vfs = getVfs();
+    vfs.on('change', onVfsChange);
+    vfs.on('delete', onVfsChange);
+
     try {
       const currentCwd = useVfsStore.getState().cwd;
       const result = await exec(trimmed, { cwd: currentCwd });
@@ -53,9 +60,16 @@ export function useCommandExecution() {
       if (result.stdout) writeOutput(result.stdout);
       if (result.stderr) writeOutput(result.stderr, 'stderr');
 
+      // Sync CWD and persist VFS only when mutated
       useVfsStore.getState().setCwd(bash.getCwd());
+      if (vfsChanged) {
+        setTimeout(() => persistVfs(vfs));
+      }
     } catch (err: any) {
       writeOutput(`Error: ${err.message}\n`, 'stderr');
+    } finally {
+      vfs.off('change', onVfsChange);
+      vfs.off('delete', onVfsChange);
     }
 
     writePrompt();
@@ -76,6 +90,7 @@ export function useCommandExecution() {
     } else if (signal === 'TAB') {
       const input = term.getInput();
       if (!input) return;
+      const cwd = useVfsStore.getState().cwd;
 
       getTabCompletions(input, cwd, bash.fs).then(({ matches, commonPrefix }) => {
         if (matches.length === 0) {
@@ -142,7 +157,7 @@ export function useCommandExecution() {
       term.setInput('');
       writePrompt();
     }
-  }, [navigateHistory, cwd, bash]);
+  }, [navigateHistory, bash]);
 
   const initializePrompt = useCallback(() => {
     setTimeout(() => writePrompt(), 100);

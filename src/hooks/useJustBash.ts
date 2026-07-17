@@ -1,8 +1,12 @@
 import { useCallback } from 'react';
 import { Bash } from 'just-bash';
-import type { BashExecResult, ExecOptions, IFileSystem, InitialFiles, FsStat, BufferEncoding } from 'just-bash';
+import type { BashExecResult, ExecOptions, IFileSystem, InitialFiles, FsStat, BufferEncoding, CustomCommand } from 'just-bash';
 import type { VirtualFS } from 'almostnode';
 import { getVfs } from '../fs/configure';
+import { cmdv } from '../tools/cmdv';
+import { node } from '../tools/node';
+import { npm } from '../tools/npm';
+import { reload } from '../tools/reload';
 
 // ---------------------------------------------------------------------------
 // VfsToJustBashAdapter — bridges almostnode's sync VirtualFS to just-bash's
@@ -140,6 +144,7 @@ class VfsToJustBashAdapter implements IFileSystem {
 // ---------------------------------------------------------------------------
 
 let _bashInstance: Bash | null = null;
+let _vfsAdapter: VfsToJustBashAdapter | null = null;
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -161,17 +166,25 @@ export function useJustBash(options?: {
   files?: InitialFiles;
   /** Override filesystem (defaults to almostnode VirtualFS adapter) */
   fs?: IFileSystem;
+  /** Extra custom commands (cmdv is always registered) */
+  customCommands?: CustomCommand[];
   /** Initial environment variables (e.g. { HOME: '/home/user' }) */
   env?: Record<string, string>;
   /** Starting working directory */
   cwd?: string;
 }) {
-  // Lazy-init the Bash singleton (uses VFS adapter by default)
+  // Lazy-init the VFS adapter singleton
+  if (!_vfsAdapter) {
+    _vfsAdapter = new VfsToJustBashAdapter(getVfs());
+  }
+
+  // Lazy-init the Bash singleton (uses VFS adapter + cmdv by default)
   if (!_bashInstance) {
     _bashInstance = new Bash({
       files: options?.files,
-      fs: new VfsToJustBashAdapter(getVfs()),
-      env: options?.env ?? {},
+      fs: options?.fs ?? _vfsAdapter,
+      customCommands: [cmdv, node, npm, reload, ...(options?.customCommands ?? [])],
+      env: options?.env ?? { sdf: 'sdf' },
       cwd: options?.cwd ?? '/home/user',
     });
   }

@@ -5,8 +5,7 @@ import { useToolStore } from '../store/toolStore';
 const BUILTIN_COMMANDS = [
   'ls', 'cd', 'pwd', 'cat', 'mkdir', 'touch', 'echo',
   'rm', 'cp', 'mv', 'node', 'clear', 'help', 'test',
-  'tool-register', 'tool-unregister', 'tool-list',
-  'vfs-export', 'vfs-import',
+  'cmdv', 'node', 'npm', 'reload',
 ];
 
 /** Get all available command names (builtins + custom tools) */
