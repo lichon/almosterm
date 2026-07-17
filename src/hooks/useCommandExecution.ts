@@ -31,14 +31,20 @@ export function useCommandExecution() {
 
     // Listen for VFS mutations from any source (adapter, container, node, etc.)
     let vfsChanged = false;
-    const onVfsChange = () => { vfsChanged = true; };
+    const onVfsChange = (path: string) => {
+      if (path.startsWith('/tmp')) return
+      vfsChanged = true;
+    };
     const vfs = getVfs();
     vfs.on('change', onVfsChange);
     vfs.on('delete', onVfsChange);
 
     try {
       const currentCwd = useVfsStore.getState().cwd;
-      const result = await exec(trimmed, { cwd: currentCwd });
+      const result = await exec(trimmed, {
+        cwd: currentCwd,
+        rawScript: true
+      });
 
       // Write stdout/stderr
       if (result.stdout) writeTerm(result.stdout);

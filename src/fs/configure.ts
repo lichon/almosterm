@@ -109,7 +109,11 @@ export function loadPersistedVfs(vfs: VirtualFS): boolean {
 export function persistVfs(vfs: VirtualFS): void {
   try {
     const snapshot = vfs.toSnapshot()
-    const storageObj = { version: 1, savedAt: Date.now(), files: snapshot.files };
+    const storageObj = {
+      version: 1,
+      savedAt: Date.now(),
+      files: snapshot.files.filter(f => !f.path.startsWith('/tmp') && f.path !== '/tmp'),
+    };
     localStorage.setItem('almosterm-vfs-snapshot', JSON.stringify(storageObj));
   } catch {
     // localStorage may be full
