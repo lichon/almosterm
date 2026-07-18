@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local virtual file system terminal - browser-based bash shell with almostnode runtime",
   "scripts": {
-    "dev": "portless term vite",
+    "dev": "vite",
     "build": "tsc && vite build",
     "start": "vite preview",
     "cf-dev": "wrangler dev",
