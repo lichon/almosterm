@@ -1,6 +1,7 @@
 import { defineCommand } from 'just-bash';
 import { PackageManager } from 'almostnode';
 import { getContainer, getVfs } from '../fs/configure';
+import { useVfsStore } from '../store/vfsStore';
 import { writeTerm } from '../utils';
 
 /** Shared cache directory for npx — packages persist across invocations. */
@@ -144,7 +145,7 @@ export const npx = defineCommand('npx', async (args, ctx) => {
   try {
     writeTerm(`npx: installing ${pkgSpec}...\r\n`);
 
-    const pm = new PackageManager(vfs, { cwd: NPX_CACHE_DIR });
+    const pm = new PackageManager(vfs, { cwd: NPX_CACHE_DIR, registry: useVfsStore.getState().npmRegistry });
     await pm.install(pkgSpec, {
       onProgress: (msg) => {
         writeTerm(`  ${msg}\r\n`);

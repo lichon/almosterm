@@ -1,6 +1,7 @@
 import { defineCommand } from 'just-bash';
 import { PackageManager } from 'almostnode';
 import { getContainer, getVfs } from '../fs/configure';
+import { useVfsStore } from '../store/vfsStore';
 import { writeTerm } from '../utils';
 
 /**
@@ -25,7 +26,8 @@ export const npm = defineCommand('npm', async (args, ctx) => {
   const rest = args.slice(1);
   const container = getContainer();
   const vfs = getVfs();
-  const pm = new PackageManager(vfs, { cwd: ctx.cwd });
+  const npmRegistry = useVfsStore.getState().npmRegistry;
+  const pm = new PackageManager(vfs, { cwd: ctx.cwd, registry: npmRegistry });
 
   // ---- install / i ----
   if (subcommand === 'install' || subcommand === 'i') {

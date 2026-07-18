@@ -5,12 +5,17 @@
   "type": "module",
   "description": "Local virtual file system terminal - browser-based bash shell with almostnode runtime",
   "scripts": {
-    "dev": "vite",
+    "dev": "portless term vite",
     "build": "tsc && vite build",
-    "start": "vite preview"
+    "start": "vite preview",
+    "cf-dev": "wrangler dev",
+    "cf-deploy": "wrangler deploy",
+    "cf-tail": "wrangler tail",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "almostnode": "^0.2.14",
+    "hono": "^4.12.30",
     "just-bash": "^3.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -21,6 +26,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.45.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -28,6 +34,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
   }
 }

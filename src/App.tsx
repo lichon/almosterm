@@ -55,6 +55,19 @@ const App: React.FC = () => {
       try {
         loadTools();
 
+        // Detect Worker proxy capabilities. If /api/status resolves,
+        // route npm through the proxy; otherwise keep direct registry.
+        try {
+          const res = await fetch('/api/status');
+          if (res.ok) {
+            const status = await res.json();
+            useVfsStore.getState().setCapabilities(status.capabilities ?? []);
+            useVfsStore.getState().setNpmRegistry('/api/npm');
+          }
+        } catch {
+          // No Worker — keep default npm registry
+        }
+
         const vfs = getVfs();
         const hasData = loadPersistedVfs(vfs);
 

@@ -36,6 +36,9 @@ Thumbs.db
 # Test coverage
 coverage/
 
+# Cloudflare
+.wrangler/
+
 # Temp
 tmp/
 temp/
