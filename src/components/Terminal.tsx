@@ -3,7 +3,7 @@ import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
-import { setTerminal } from '../utils';
+import { getSshStream, setTerminal } from '../utils';
 
 interface TerminalComponentProps {
   onInput?: (data: string) => void;
@@ -90,6 +90,14 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
 
     // Handle terminal input
     term.onData((data) => {
+      // ---- SSH raw mode: forward keystrokes to the active SSH session ----
+      const sshStream = getSshStream();
+      if (sshStream) {
+        try { sshStream.write(data); } catch {}
+        return;
+      }
+
+      // ---- Normal shell mode ----
       // Check for Ctrl+C (ETX = 0x03)
       if (data === '\x03') {
         inputBufferRef.current = '';

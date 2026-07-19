@@ -5,7 +5,7 @@ interface VfsState {
   vfsReady: boolean;
   totalSize: number;
   maxSize: number;
-  /** npm registry URL — set to /api/npm when Worker proxy is available, else direct */
+  /** npm registry URL (defaults to registry.npmjs.org) */
   npmRegistry: string;
   /** Worker capabilities detected at init */
   capabilities: string[];

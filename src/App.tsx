@@ -62,7 +62,6 @@ const App: React.FC = () => {
           if (res.ok) {
             const status = await res.json();
             useVfsStore.getState().setCapabilities(status.capabilities ?? []);
-            useVfsStore.getState().setNpmRegistry('/api/npm');
           }
         } catch {
           // No Worker — keep default npm registry

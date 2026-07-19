@@ -21,65 +21,26 @@ const app = new Hono<AppEnv>();
 app.get('/api/status', (c) => {
   return c.json({
     capabilities: [
-      'npm-proxy',
       'curl-proxy',
       'ssh-proxy',
     ],
   });
 });
 
-// ---- /api/npm/* → registry.npmjs.org (with tarball URL rewriting) ----
-app.all('/api/npm/*', async (c) => {
-  const npmPath = c.req.path.replace('/api/npm', '');
-  const npmUrl = `https://registry.npmjs.org${npmPath}${new URL(c.req.url).search}`;
-
-  const upstreamHeaders = new Headers(c.req.raw.headers);
-  upstreamHeaders.delete('host');
-  upstreamHeaders.set('accept', 'application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8');
-
-  const upstream = await fetch(npmUrl, {
-    method: c.req.method,
-    headers: upstreamHeaders,
-    body: c.req.method !== 'GET' && c.req.method !== 'HEAD'
-      ? await c.req.raw.clone().arrayBuffer()
-      : undefined,
-  });
-
-  const responseHeaders = new Headers(upstream.headers);
-  responseHeaders.delete('content-encoding');
-  responseHeaders.set('access-control-allow-origin', '*');
-
-  // Rewrite absolute npm registry URLs → /api/npm/ so downstream fetches
-  // (e.g. almostnode's downloadAndExtract) stay on the proxy and avoid CORS.
-  const contentType = upstream.headers.get('content-type') || '';
-  if (contentType.includes('json')) {
-    let body = await upstream.text();
-    body = body.replace(/https:\/\/registry\.npmjs\.org\//g, '/api/npm/');
-    return new Response(body, { status: upstream.status, headers: responseHeaders });
-  }
-
-  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
-});
-
-// ---- /api/curl — same-origin HTTP proxy ----
+// ---- /api/curl — HTTP proxy (bypasses browser CORS for tarball downloads, etc.) ----
 app.all('/api/curl', async (c) => {
   const targetUrl = c.req.query('url');
   if (!targetUrl) {
     return c.json({ error: 'missing "url" query parameter' }, 400);
   }
 
-  let parsed: URL;
-  try { parsed = new URL(targetUrl); } catch {
+  try { new URL(targetUrl); } catch {
     return c.json({ error: 'invalid URL' }, 400);
-  }
-
-  const requestOrigin = new URL(c.req.url).origin;
-  if (parsed.origin !== requestOrigin) {
-    return c.json({ error: 'cross-origin requests not allowed via /api/curl' }, 403);
   }
 
   const upstreamHeaders = new Headers(c.req.raw.headers);
   upstreamHeaders.delete('host');
+  upstreamHeaders.set('accept-encoding', 'gzip');
 
   const upstream = await fetch(targetUrl, {
     method: c.req.method,
@@ -91,15 +52,18 @@ app.all('/api/curl', async (c) => {
 
   const responseHeaders = new Headers(upstream.headers);
   responseHeaders.set('access-control-allow-origin', '*');
+  // Allow binary transfer for tarballs — no charset mangling
+  responseHeaders.set('access-control-expose-headers', '*');
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 });
 
-// ---- /api/connect — WebSocket-to-TCP SSH pipe ----
+// ---- /api/connect — WebSocket-to-TCP raw proxy (pure SOCKS-style tunnel) ----
 app.get('/api/connect', async (c) => {
-  const upgradeHeader = c.req.header('Upgrade')
+  const upgradeHeader = c.req.header('Upgrade');
   if (!upgradeHeader || upgradeHeader !== 'websocket') {
-    return c.json({ error: 'invalid request' }, 400)
+    return c.json({ error: 'invalid request' }, 400);
   }
+
   const { searchParams } = new URL(c.req.url);
   const host = searchParams.get('host');
   const port = parseInt(searchParams.get('port') || '22', 10);
@@ -110,13 +74,11 @@ app.get('/api/connect', async (c) => {
 
   // Open TCP connection to the target
   const tcp = connect({ hostname: host, port });
-  await tcp.opened
+  await tcp.opened;
 
-  // Create a WebSocket pair: one end to the client, one for the server side
+  // Create a WebSocket pair
   const pair = new WebSocketPair();
   const [clientWs, serverWs] = [pair[0], pair[1]];
-
-  // Accept the server-side WebSocket
   serverWs.accept();
 
   // TCP → WebSocket

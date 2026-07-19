@@ -8,6 +8,16 @@ export function setTerminal(term: any): void {
   (window as any).__almosterm_terminal = term;
 }
 
+/** Retrieve the ssh stream instance on the global scope */
+export function getSshStream() {
+  return (window as any).__almosterm_ssh_stream;
+}
+
+/** Register the ssh stream instance on the global scope */
+export function setSshStream(stream: any): void {
+  (window as any).__almosterm_ssh_stream = stream;
+}
+
 /** Normalize LF → CRLF so xterm renders without staircasing */
 export function normalizeEol(data: string): string {
   return data.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
