@@ -2,7 +2,6 @@ import { defineCommand } from 'just-bash';
 import { useVfsStore } from '../store/vfsStore';
 import { getTerminal, setSshStream, writeTerm } from '../utils';
 import { getContainer } from '../fs/configure';
-import { Buffer } from 'buffer';
 import type { Client } from 'ssh2';
 
 /**
@@ -38,7 +37,8 @@ class WebSocketSocket {
       if (this._closed) return;
       let data: Uint8Array;
       if (event.data instanceof ArrayBuffer) {
-        data = new Uint8Array(event.data);
+        // ssh2 need buffer callback
+        data = Buffer.from(event.data);
       } else if (event.data instanceof Blob) {
         const reader = new FileReader();
         reader.onload = () => {
@@ -68,7 +68,7 @@ class WebSocketSocket {
     };
   }
 
-  write(data: Uint8Array | string | Buffer, _encoding?: string): boolean {
+  write(data: Uint8Array | string, _encoding?: string): boolean {
     if (this._closed) return false;
     if (this._ws.readyState !== WebSocket.OPEN) return false;
     try {
@@ -148,7 +148,7 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
   const target = args[0];
   let port = 22;
   let password: string | undefined;
-  let privateKey: string | Buffer | undefined;
+  let privateKey: string | undefined;
 
   // Parse flags
   for (let i = 1; i < args.length; i++) {
@@ -178,7 +178,7 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
           };
         }
         const raw = vfs.readFileSync(keyPath) as Uint8Array;
-        privateKey = Buffer.from(raw);
+        // privateKey = Buffer.from(raw);
       } catch (err: any) {
         return {
           stdout: '',
@@ -226,10 +226,8 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
   const sock = new WebSocketSocket(ws);
 
   // ---- Step 3: Create ssh2 client ----
-  // Execute JavaScript code directly
-  const client = getContainer().execute(`const { Client } = require('ssh2'); module.exports = new Client();`,
-    '/home/user/ssh-client.js');
-  const conn = client.exports as Client;
+  // Execute JavaScript code directly to get client inside container
+  const conn = getContainer().createREPL().eval(`require('ssh2').Client; new Client()`) as Client;
 
   const sshReady = new Promise<'ready' | 'error'>((resolve) => {
     conn.on('ready', () => resolve('ready'));
@@ -247,6 +245,11 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
     privateKey,
     readyTimeout: 20000,
     hostVerifier: () => true, // Accept any host key (like -o StrictHostKeyChecking=no)
+    algorithms: {
+      kex: [
+        'diffie-hellman-group14-sha256',
+      ],
+    },
   });
 
   const result = await sshReady;
@@ -272,12 +275,12 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
     const term = getTerminal()
 
     // SSH shell stdout → terminal
-    stream.on('data', (data: Buffer) => {
+    stream.on('data', (data: any) => {
       term.write(data.toString('utf-8'));
     });
 
     // SSH shell stderr → terminal
-    stream.stderr.on('data', (data: Buffer) => {
+    stream.stderr.on('data', (data: any) => {
       term.write(data.toString('utf-8'));
     });
 

@@ -157,6 +157,11 @@ html, body, #root {
   outline: none;
 }
 
+.dialog.edit-dialog {
+  min-width: 680px;
+  max-width: 800px;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

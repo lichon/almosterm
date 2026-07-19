@@ -4,9 +4,10 @@ import { useVfsStore } from '../store/vfsStore';
 interface StatusBarProps {
   onImport?: () => void;
   onExport?: () => void;
+  onEdit?: () => void;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ onImport, onExport }) => {
+export const StatusBar: React.FC<StatusBarProps> = ({ onImport, onExport, onEdit }) => {
   const { cwd, totalSize, vfsReady } = useVfsStore();
 
   const formatSize = (bytes: number): string => {
@@ -36,6 +37,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onImport, onExport }) => {
         <span className="status-bar__label">session:</span>
         <span className="status-bar__value">local</span>
       </div>
+      {onEdit && (
+        <button
+          className="status-bar__btn"
+          onClick={onEdit}
+          title="Edit a file in VFS"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border, #333366)',
+            color: 'var(--text-dim)',
+            padding: '2px 10px',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            marginLeft: '8px',
+          }}
+        >
+          ✏️ Edit File
+        </button>
+      )}
       {onImport && (
         <button
           className="status-bar__btn"

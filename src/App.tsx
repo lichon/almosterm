@@ -5,6 +5,8 @@ import { getVfs, populateDefaultVfs, loadPersistedVfs } from './fs/configure';
 import Bash from './bash';
 import { StatusBar } from './components/StatusBar';
 import { ImportDialog } from './components/ImportDialog';
+import { EditDialog } from './components/EditDialog';
+import { useEditorStore } from './store/editorStore';
 import './styles/terminal.css';
 
 const App: React.FC = () => {
@@ -13,6 +15,7 @@ const App: React.FC = () => {
   const [initError, setInitError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
+  const { open: editOpen, filePath: editPath, openEditor, closeEditor } = useEditorStore();
 
   const handleExport = useCallback(() => {
     const vfs = getVfs();
@@ -60,7 +63,7 @@ const App: React.FC = () => {
         try {
           const res = await fetch('/api/status');
           if (res.ok) {
-            const status = await res.json();
+            const status = await res.json() as { capabilities?: string[] };
             useVfsStore.getState().setCapabilities(status.capabilities ?? []);
           }
         } catch {
@@ -95,8 +98,10 @@ const App: React.FC = () => {
       <StatusBar
         onImport={() => setImportOpen(true)}
         onExport={handleExport}
+        onEdit={() => openEditor()}
       />
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <EditDialog open={editOpen} onClose={closeEditor} initialPath={editPath} />
     </div>
   );
 };
