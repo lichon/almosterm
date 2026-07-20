@@ -12,6 +12,26 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      Browser polyfills that must run before the almostnode module loads.
+      1. Prevent Object.freeze on the crypto shim namespace so ssh.ts can
+         monkey-patch createECDH / getCurves / assert methods.
+    -->
+    <script>
+      (function() {
+        // --- 1. Keep crypto shim namespace mutable ---
+        var _freeze = Object.freeze;
+        Object.freeze = function(obj) {
+          if (obj && typeof obj.createHash === 'function'
+              && typeof obj.randomBytes === 'function'
+              && typeof obj.createHmac === 'function'
+              && typeof obj.createECDH !== 'function') {
+            return obj;
+          }
+          return _freeze.call(Object, obj);
+        };
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
