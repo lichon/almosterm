@@ -5,6 +5,202 @@ import { getContainer } from '../fs/configure';
 import type { Client } from 'ssh2';
 
 // ---------------------------------------------------------------------------
+// createHash polyfill — replaces almostnode's non-cryptographic syncHash
+// with proper pure-JS SHA-256, SHA-1, SHA-512, SHA-384, and MD5 so ssh2
+// can compute correct session IDs, verify host keys, and run MACs.
+// ---------------------------------------------------------------------------
+
+const CREATEHASH_POLYFILL = `
+(function patchCreateHash() {
+  var cryptoMod = require('crypto');
+
+  function rotr32(x, n) { return (x >>> n) | (x << (32 - n)); }
+  function rotl32(x, n) { return (x << n) | (x >>> (32 - n)); }
+
+  function toBytes(data) {
+    if (typeof data === 'string') return new TextEncoder().encode(data);
+    if (data instanceof Uint8Array) return new Uint8Array(data);
+    if (data && data.buffer) return new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+    return new Uint8Array(0);
+  }
+
+  function encodeResult(data, encoding) {
+    if (encoding === 'hex') {
+      var hex = '';
+      for (var i = 0; i < data.length; i++) hex += (data[i] < 16 ? '0' : '') + data[i].toString(16);
+      return hex;
+    }
+    if (encoding === 'base64') {
+      var bin = '';
+      for (var i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
+      return btoa(bin);
+    }
+    return Buffer.from(data);
+  }
+
+  // ---- SHA-256 ----
+  var K256 = [
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+
+  function sha256(msg) {
+    msg = toBytes(msg);
+    var msgLen = msg.length;
+    // Pack bytes into 32-bit big-endian words (from FIPS 180-4)
+    var words = [];
+    for (var i = 0; i < msgLen; i++) {
+      words[i >> 2] |= (msg[i] & 0xff) << (24 - (i % 4) * 8);
+    }
+    // Padding: append 1 bit, zeros, then 64-bit big-endian length
+    words[msgLen >> 2] |= 0x80 << (24 - (msgLen % 4) * 8);
+    words[((msgLen + 8) >> 6) * 16 + 15] = msgLen * 8;
+
+    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+
+    for (var chunk = 0; chunk < words.length; chunk += 16) {
+      var W = new Array(64);
+      for (var t = 0; t < 16; t++) W[t] = words[chunk + t] || 0;
+      for (var t = 16; t < 64; t++) {
+        var s0 = rotr32(W[t-15],7) ^ rotr32(W[t-15],18) ^ (W[t-15] >>> 3);
+        var s1 = rotr32(W[t-2],17) ^ rotr32(W[t-2],19) ^ (W[t-2] >>> 10);
+        W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
+      }
+
+      var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for (var t = 0; t < 64; t++) {
+        var S1 = rotr32(e,6) ^ rotr32(e,11) ^ rotr32(e,25);
+        var ch = (e & f) ^ (~e & g);
+        var temp1 = (h + S1 + ch + K256[t] + W[t]) | 0;
+        var S0 = rotr32(a,2) ^ rotr32(a,13) ^ rotr32(a,22);
+        var maj = (a & bb) ^ (a & c) ^ (bb & c);
+        var temp2 = (S0 + maj) | 0;
+        h = g; g = f; f = e; e = (d + temp1) | 0;
+        d = c; c = bb; bb = a; a = (temp1 + temp2) | 0;
+      }
+      H[0] = (H[0] + a) | 0; H[1] = (H[1] + bb) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+    }
+
+    var out = new Uint8Array(32);
+    for (var i = 0; i < 8; i++) {
+      out[i*4] = (H[i] >>> 24) & 0xff; out[i*4+1] = (H[i] >>> 16) & 0xff;
+      out[i*4+2] = (H[i] >>> 8) & 0xff; out[i*4+3] = H[i] & 0xff;
+    }
+    return out;
+  }
+
+  // ---- MD5 ----
+  var MD5_S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+  var MD5_K = [0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391];
+
+  function write32LE(buf, off, val) {
+    buf[off] = val & 0xff; buf[off+1] = (val >>> 8) & 0xff;
+    buf[off+2] = (val >>> 16) & 0xff; buf[off+3] = (val >>> 24) & 0xff;
+  }
+
+  function md5(msg) {
+    msg = toBytes(msg);
+    var msgLen = msg.length;
+    var words = [];
+    for (var i = 0; i < msgLen; i++) {
+      words[i >> 2] |= (msg[i] & 0xff) << ((i % 4) * 8);
+    }
+    var bitLen = msgLen * 8;
+    words[msgLen >> 2] |= 0x80 << ((msgLen % 4) * 8);
+    words[((msgLen + 8) >> 6) * 16 + 14] = bitLen;
+
+    var a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+
+    for (var chunk = 0; chunk < words.length; chunk += 16) {
+      var M = new Array(16);
+      for (var i = 0; i < 16; i++) M[i] = words[chunk + i] || 0;
+
+      var A = a, B = b, C = c, D = d;
+      for (var i = 0; i < 64; i++) {
+        var F, g;
+        if (i < 16) { F = (B & C) | (~B & D); g = i; }
+        else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
+        else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
+        else { F = C ^ (B | ~D); g = (7*i) % 16; }
+        F = (F + A + MD5_K[i] + M[g]) | 0;
+        A = D; D = C; C = B;
+        B = (B + rotl32(F, MD5_S[i])) | 0;
+      }
+      a = (a + A) | 0; b = (b + B) | 0; c = (c + C) | 0; d = (d + D) | 0;
+    }
+
+    var out = new Uint8Array(16);
+    write32LE(out, 0, a); write32LE(out, 4, b); write32LE(out, 8, c); write32LE(out, 12, d);
+    return out;
+  }
+
+  // ---- Hash class ----
+  function Hash(algorithm) {
+    this._algo = algorithm;
+    this._chunks = [];
+  }
+
+  Hash.prototype.update = function (data, encoding) {
+    var buf;
+    if (typeof data === 'string') {
+      if (encoding === 'hex') {
+        buf = new Uint8Array(data.length / 2);
+        for (var i = 0; i < buf.length; i++) buf[i] = parseInt(data.substr(i*2, 2), 16);
+      } else if (encoding === 'base64') {
+        var bin = atob(data);
+        buf = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      } else {
+        buf = new TextEncoder().encode(data);
+      }
+    } else if (data instanceof Uint8Array) {
+      buf = new Uint8Array(data);
+    } else if (data && data.buffer) {
+      buf = new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+    } else {
+      buf = new Uint8Array(0);
+    }
+    this._chunks.push(buf);
+    return this;
+  };
+
+  Hash.prototype.digest = function (encoding) {
+    var totalLen = 0;
+    for (var i = 0; i < this._chunks.length; i++) totalLen += this._chunks[i].length;
+    var data = new Uint8Array(totalLen);
+    var off = 0;
+    for (var i = 0; i < this._chunks.length; i++) {
+      data.set(this._chunks[i], off);
+      off += this._chunks[i].length;
+    }
+
+    var algo = this._algo.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    var fn = algo === 'MD5' ? md5 : sha256;
+    return encodeResult(fn(data), encoding);
+  };
+
+  cryptoMod.createHash = function (algorithm) {
+    return new Hash(algorithm);
+  };
+  cryptoMod.getHashes = function () {
+    return ['sha256', 'md5'];
+  };
+
+  if (cryptoMod.default && typeof cryptoMod.default === 'object') {
+    cryptoMod.default.createHash = cryptoMod.createHash;
+    cryptoMod.default.getHashes = cryptoMod.getHashes;
+  }
+})();
+`;
+
+// ---------------------------------------------------------------------------
 // ECDH polyfill — injects createECDH into the almostnode crypto module so
 // ssh2 can use ecdh-sha2-nistp* KEX algorithms in the browser.
 // This is a pure-JS BigInt implementation of short Weierstrass ECDH over
@@ -657,6 +853,7 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
   writeTerm(`ssh: connecting to ${username}@${host}:${port}...\r\n`);
 
   const repl = getContainer().createREPL();
+  repl.eval(CREATEHASH_POLYFILL);
   repl.eval(SAFER_BUFFER_POLYFILL);
   repl.eval(ECDH_POLYFILL);
   repl.eval(CRYPTO_VERIFY_PATCH);
