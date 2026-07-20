@@ -2,7 +2,8 @@ import { useCallback } from 'react';
 import { Bash } from 'just-bash';
 import type { BashExecResult, ExecOptions, IFileSystem, InitialFiles, FsStat, BufferEncoding, CustomCommand } from 'just-bash';
 import type { VirtualFS } from 'almostnode';
-import { getVfs } from '../fs/configure';
+import { getContainer, getVfs } from '../fs/configure';
+import { useNodePolyfill } from './useNodePolyfill';
 import { cmdv } from '../tools/cmdv';
 import { node } from '../tools/node';
 import { npm } from '../tools/npm';
@@ -150,6 +151,7 @@ class VfsToJustBashAdapter implements IFileSystem {
 
 let _bashInstance: Bash | null = null;
 let _vfsAdapter: VfsToJustBashAdapter | null = null;
+let _polyfillsInjected = false;
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -181,6 +183,13 @@ export function useJustBash(options?: {
   // Lazy-init the VFS adapter singleton
   if (!_vfsAdapter) {
     _vfsAdapter = new VfsToJustBashAdapter(getVfs());
+  }
+
+  // Inject crypto polyfills into the container once (needed by ssh2 etc.)
+  if (!_polyfillsInjected) {
+    const repl = getContainer().createREPL();
+    useNodePolyfill(repl);
+    _polyfillsInjected = true;
   }
 
   // Lazy-init the Bash singleton (uses VFS adapter + cmdv by default)
