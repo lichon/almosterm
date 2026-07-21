@@ -192,11 +192,19 @@ export function useHotKeys(options?: UseHotKeysOptions): UseHotKeysAPI {
       return;
     }
 
+    // ── Ctrl+U (Kill from cursor to beginning of line) ──
+    if (data === '\x15') {
+      if (buf.cursor === 0) return; // no-op at start of line
+      buf.text = buf.text.slice(stringOffset(buf.text, buf.cursor));
+      buf.cursor = 0;
+      redraw();
+      return;
+    }
+
     // ── Ctrl+W (Delete word before cursor) ──
     if (data === '\x17') {
       if (buf.cursor === 0) return; // no-op at start of line
       const boundary = wordBoundaryBeforeCursor(buf.text, buf.cursor);
-      const deleteCount = buf.cursor - boundary;
       buf.text = deleteFromCluster(buf.text, boundary) + buf.text.slice(stringOffset(buf.text, buf.cursor));
       buf.cursor = boundary;
       redraw();
@@ -265,9 +273,10 @@ export function useHotKeys(options?: UseHotKeysOptions): UseHotKeysAPI {
       return; // ignore other control characters
     }
 
-    // Insert character at cursor position
+    // Insert character(s) at cursor position.
+    // data may contain multiple grapheme clusters (e.g. IME input, paste).
     buf.text = insertAtCluster(buf.text, buf.cursor, data);
-    buf.cursor++;
+    buf.cursor += graphemeCount(data);
     redraw();
   }, [redraw, clear]);
 
