@@ -1,6 +1,7 @@
 # Agent
 .pi
-.specify
+.specify/
+specs/
 nul
 
 # Dependencies

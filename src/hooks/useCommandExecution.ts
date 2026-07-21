@@ -6,26 +6,30 @@ import { persistVfs, getVfs } from '../fs/configure';
 import { getTabCompletions } from './useTabCompletion';
 import { getTerminal, writeTerm } from '../utils';
 
-function writePrompt(cmd: string | null = '', reset: boolean = false): void {
+/** Get the current CWD-colored prompt string (without trailing space+command). */
+function getPromptStr(): string {
   const cwd = useVfsStore.getState().cwd;
-  const term = getTerminal();
-  if (!term) return;
-  if (reset) term.write(`\r\x1b[K`);
   const displayCwd = cwd.replace(/^\/home\/user/, "~") || "/";
-  term.write(`\x1b[34m${displayCwd}\x1b[0m$ ${cmd}`);
+  return `\x1b[34m${displayCwd}\x1b[0m$ `;
 }
 
 export function useCommandExecution() {
   const { bash, exec } = useJustBash();
   const { addToHistory, navigateHistory, resetHistoryNavigation } = useSessionStore();
 
+  /** Public callback for Terminal's useHotKeys getPrompt option. */
+  const getPrompt = useCallback(() => getPromptStr(), []);
+
   const handleInput = useCallback(async (command: string) => {
     addToHistory(command);
     resetHistoryNavigation();
 
+    const term = getTerminal();
+
     const trimmed = command.trim();
     if (!trimmed.length) {
-      writePrompt();
+      // Empty command — redraw prompt for next input
+      if (term) term.redraw();
       return;
     }
 
@@ -62,70 +66,74 @@ export function useCommandExecution() {
       vfs.off('delete', onVfsChange);
     }
 
-    writePrompt();
+    // Redraw prompt for next input (buffer already cleared by handleKey)
+    if (term) term.redraw();
   }, [bash, exec, addToHistory, resetHistoryNavigation]);
 
   const handleSignal = useCallback((signal: string) => {
     const term = getTerminal();
     if (!term) return;
+
     if (signal === 'ARROW_UP') {
       const cmd = navigateHistory('up');
-      if (cmd !== null) term.setInput(cmd);
-      writePrompt(cmd, true);
+      if (cmd !== null) {
+        term.setInput(cmd);
+      }
+      term.redraw();
     } else if (signal === 'ARROW_DOWN') {
       const cmd = navigateHistory('down');
-      if (cmd !== null) term.setInput(cmd);
-      else term.setInput('');
-      writePrompt(cmd, true);
+      term.setInput(cmd ?? '');
+      term.redraw();
     } else if (signal === 'TAB') {
       const input = term.getInput();
       if (!input) return;
+      const cursor = term.getCursor ? term.getCursor() : undefined;
       const cwd = useVfsStore.getState().cwd;
 
-      getTabCompletions(input, cwd, bash.fs).then(({ matches, commonPrefix }) => {
+      getTabCompletions(input, cwd, bash.fs, cursor).then(({ matches, commonPrefix }) => {
         if (matches.length === 0) {
           // No completions — do nothing
           return;
         }
 
+        // Find word boundaries at cursor for replacement
+        const targetPos = cursor !== undefined ? cursor : input.length;
+        let wordStart = targetPos;
+        while (wordStart > 0 && input[wordStart - 1] !== ' ' && input[wordStart - 1] !== '\t') {
+          wordStart--;
+        }
+        let wordEnd = targetPos;
+        while (wordEnd < input.length && input[wordEnd] !== ' ' && input[wordEnd] !== '\t') {
+          wordEnd++;
+        }
+        const oldWord = input.slice(wordStart, wordEnd);
+
         if (matches.length === 1) {
           // Single match — complete the word
-          const words = input.split(/\s+/);
-          const lastWord = words[words.length - 1] || '';
-
           let completed: string;
-          if (lastWord.includes('/')) {
-            const lastSlash = lastWord.lastIndexOf('/');
-            completed = lastWord.substring(0, lastSlash + 1) + matches[0];
+          if (oldWord.includes('/')) {
+            const lastSlash = oldWord.lastIndexOf('/');
+            completed = oldWord.substring(0, lastSlash + 1) + matches[0];
           } else {
             completed = matches[0];
           }
 
-          words[words.length - 1] = completed;
-          const newInput = words.join(' ');
+          const newInput = input.slice(0, wordStart) + completed + input.slice(wordEnd);
           term.setInput(newInput);
-
-          // Redraw line
-          writePrompt(newInput, true);
-        } else if (commonPrefix.length > input.split(/\s+/).pop()!.length) {
+          term.redraw();
+        } else if (commonPrefix.length > oldWord.length) {
           // Multiple matches with common prefix — complete as much as possible
-          const words = input.split(/\s+/);
-          const lastWord = words[words.length - 1] || '';
-
           let completed: string;
-          if (lastWord.includes('/')) {
-            const lastSlash = lastWord.lastIndexOf('/');
-            completed = lastWord.substring(0, lastSlash + 1) + commonPrefix;
+          if (oldWord.includes('/')) {
+            const lastSlash = oldWord.lastIndexOf('/');
+            completed = oldWord.substring(0, lastSlash + 1) + commonPrefix;
           } else {
             completed = commonPrefix;
           }
 
-          words[words.length - 1] = completed;
-          const newInput = words.join(' ');
+          const newInput = input.slice(0, wordStart) + completed + input.slice(wordEnd);
           term.setInput(newInput);
-
-          // Redraw line
-          writePrompt(newInput, true);
+          term.redraw();
         } else {
           // Multiple matches, no further common prefix — show options
           term.writeln('');
@@ -139,19 +147,23 @@ export function useCommandExecution() {
           for (const row of rows) {
             term.writeln(`\x1b[90m${row}\x1b[0m`);
           }
-          // Redraw prompt and input
-          writePrompt(input, true);
+          // Redraw prompt and input at cursor position
+          term.setInput(input);
+          term.redraw();
         }
       });
     } else if (signal === 'SIGINT') {
-      term.setInput('');
-      writePrompt();
+      // Buffer already cleared by handleKey; redraw shows empty prompt
+      term.redraw();
     }
   }, [navigateHistory, bash]);
 
   const initializePrompt = useCallback(() => {
-    setTimeout(() => writePrompt(), 100);
+    setTimeout(() => {
+      const term = getTerminal();
+      if (term) term.redraw();
+    }, 100);
   }, []);
 
-  return { handleInput, handleSignal, initializePrompt, bash };
+  return { handleInput, handleSignal, initializePrompt, bash, getPrompt };
 }

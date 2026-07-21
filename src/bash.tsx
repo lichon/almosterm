@@ -9,7 +9,7 @@ import { getTerminal } from './utils';
  * Wires xterm.js Terminal ↔ just-bash Bash instance.
  */
 const Bash: React.FC = () => {
-  const { handleInput, handleSignal, initializePrompt, bash } = useCommandExecution();
+  const { handleInput, handleSignal, initializePrompt, bash, getPrompt } = useCommandExecution();
   const initializedRef = useRef(false);
 
   useEffect(() => {
@@ -61,6 +61,7 @@ const Bash: React.FC = () => {
       onInput={handleInput}
       onSignal={handleSignal}
       onFileDrop={handleFileDrop}
+      getPrompt={getPrompt}
     />
   );
 };

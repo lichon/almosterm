@@ -4,26 +4,32 @@ import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
 import { getSshStream, setTerminal } from '../utils';
+import { useHotKeys } from '../hooks/useHotKeys';
+import type { SignalType } from '../hooks/useHotKeys';
 
 interface TerminalComponentProps {
   onInput?: (data: string) => void;
   onSignal?: (signal: string) => void;
   onFileDrop?: (file: File) => void;
+  /** Accessor for the current prompt string, used by useHotKeys for redraw. */
+  getPrompt?: () => string;
 }
 
-export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, onFileDrop }) => {
+export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, onFileDrop, getPrompt }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const inputBufferRef = useRef<string>('');
-  const onInputRef = useRef(onInput);
-  const onSignalRef = useRef(onSignal);
   const onFileDropRef = useRef(onFileDrop);
 
   // Keep callback refs current
-  onInputRef.current = onInput;
-  onSignalRef.current = onSignal;
   onFileDropRef.current = onFileDrop;
+
+  // Cursor-aware input buffer with hotkey dispatch
+  const hotKeys = useHotKeys({
+    onSubmit: onInput,
+    onSignal: onSignal as ((signal: SignalType) => void) | undefined,
+    getPrompt,
+  });
 
   const writeToTerminal = useCallback((data: string) => {
     try { xtermRef.current?.write(data); } catch { /* terminal disposed */ }
@@ -97,86 +103,8 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
         return;
       }
 
-      // ---- Normal shell mode ----
-      // Check for Ctrl+C (ETX = 0x03)
-      if (data === '\x03') {
-        inputBufferRef.current = '';
-        term.write('^C\r\n');
-        if (onSignalRef.current) {
-          onSignalRef.current('SIGINT');
-        }
-        return;
-      }
-
-      // Handle Enter
-      if (data === '\r') {
-        term.write('\r\n');
-        const command = inputBufferRef.current;
-        inputBufferRef.current = '';
-        if (onInputRef.current) {
-          onInputRef.current(command);
-        }
-        return;
-      }
-
-      // Handle Backspace
-      if (data === '\x7f') {
-        if (inputBufferRef.current.length > 0) {
-          inputBufferRef.current = inputBufferRef.current.slice(0, -1);
-          term.write('\b \b');
-        }
-        return;
-      }
-
-      // Handle arrow keys via escape sequences
-      if (data.startsWith('\x1b[')) {
-        if (data === '\x1b[A') {
-          // Up arrow - emit custom event handled by parent
-          if (onSignalRef.current) {
-            onSignalRef.current('ARROW_UP');
-          }
-          return;
-        }
-        if (data === '\x1b[B') {
-          // Down arrow
-          if (onSignalRef.current) {
-            onSignalRef.current('ARROW_DOWN');
-          }
-          return;
-        }
-        if (data === '\x1b[D') {
-          // Left arrow - move cursor left if possible
-          if (inputBufferRef.current.length > 0) {
-            // Simple: just ignore for now (don't support cursor movement in input buffer)
-          }
-          return;
-        }
-        if (data === '\x1b[C') {
-          // Right arrow - ignore
-          return;
-        }
-        // Tab key
-        if (data === '\x1b[Z' || data === '\t') {
-          // Emit tab event
-          if (onSignalRef.current) {
-            onSignalRef.current('TAB');
-          }
-          return;
-        }
-        return;
-      }
-
-      // Handle Tab (raw)
-      if (data === '\t') {
-        if (onSignalRef.current) {
-          onSignalRef.current('TAB');
-        }
-        return;
-      }
-
-      // Regular character - echo and buffer
-      inputBufferRef.current += data;
-      term.write(data);
+      // ---- Normal shell mode: delegate to cursor-aware hotkey handler ----
+      hotKeys.handleKey(data);
     });
 
     // Drag-and-drop file support
@@ -255,20 +183,24 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
   // The parent hooks call writeToTerminal via a ref.
   // For now, we expose methods on the window for the hooks.
   useEffect(() => {
-    // Store terminal writer and input buffer access on window for access by hooks
+    // Store terminal writer and hotKeys access on window for access by hooks
     setTerminal({
       write: writeToTerminal,
       writeln: writelnToTerminal,
       clear: clearTerminal,
-      getInput: () => inputBufferRef.current,
+      getInput: () => hotKeys.getInput(),
       setInput: (value: string) => {
-        inputBufferRef.current = value;
+        hotKeys.setInput(value);
+      },
+      getCursor: () => hotKeys.cursor,
+      redraw: () => {
+        hotKeys.redraw();
       },
     });
     return () => {
       setTerminal(null);
     };
-  }, [writeToTerminal, writelnToTerminal, clearTerminal]);
+  }, [writeToTerminal, writelnToTerminal, clearTerminal, hotKeys]);
 
   return (
     <div
