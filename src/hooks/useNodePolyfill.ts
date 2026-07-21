@@ -1,193 +1,86 @@
 // Polyfills injected into the almostnode container so ssh2 can run in the browser.
 // Extracted from src/tools/ssh.ts — see that file for the SSH command itself.
 
+import CryptoJS from 'crypto-js';
+
+// Expose crypto-js globally so the almostnode REPL eval scripts can access it
+(globalThis as any).__cryptoJS = CryptoJS;
+
 // ---------------------------------------------------------------------------
 // createHash polyfill — replaces almostnode's non-cryptographic syncHash
-// with proper pure-JS SHA-256, SHA-1, SHA-512, SHA-384, and MD5 so ssh2
+// with crypto-js SHA-256 / MD5 so ssh2
 // can compute correct session IDs, verify host keys, and run MACs.
 // ---------------------------------------------------------------------------
 
 const CREATEHASH_POLYFILL = `
 (function patchCreateHash() {
   var cryptoMod = require('crypto');
+  var C = globalThis.__cryptoJS;
 
-  function rotr32(x, n) { return (x >>> n) | (x << (32 - n)); }
-  function rotl32(x, n) { return (x << n) | (x >>> (32 - n)); }
-
-  function toBytes(data) {
-    if (typeof data === 'string') return new TextEncoder().encode(data);
-    if (data instanceof Uint8Array) return new Uint8Array(data);
-    if (data && data.buffer) return new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
-    return new Uint8Array(0);
-  }
-
-  function encodeResult(data, encoding) {
-    if (encoding === 'hex') {
-      var hex = '';
-      for (var i = 0; i < data.length; i++) hex += (data[i] < 16 ? '0' : '') + data[i].toString(16);
-      return hex;
-    }
-    if (encoding === 'base64') {
-      var bin = '';
-      for (var i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
-      return btoa(bin);
-    }
-    return Buffer.from(data);
-  }
-
-  // ---- SHA-256 ----
-  var K256 = [
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-  ];
-
-  function sha256(msg) {
-    msg = toBytes(msg);
-    var msgLen = msg.length;
-    // Pack bytes into 32-bit big-endian words (from FIPS 180-4)
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      words[i >> 2] |= (msg[i] & 0xff) << (24 - (i % 4) * 8);
-    }
-    // Padding: append 1 bit, zeros, then 64-bit big-endian length
-    words[msgLen >> 2] |= 0x80 << (24 - (msgLen % 4) * 8);
-    words[((msgLen + 8) >> 6) * 16 + 15] = msgLen * 8;
-
-    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-
-    for (var chunk = 0; chunk < words.length; chunk += 16) {
-      var W = new Array(64);
-      for (var t = 0; t < 16; t++) W[t] = words[chunk + t] || 0;
-      for (var t = 16; t < 64; t++) {
-        var s0 = rotr32(W[t-15],7) ^ rotr32(W[t-15],18) ^ (W[t-15] >>> 3);
-        var s1 = rotr32(W[t-2],17) ^ rotr32(W[t-2],19) ^ (W[t-2] >>> 10);
-        W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
+  function toWordArray(data) {
+    if (typeof data === 'string') return C.enc.Utf8.parse(data);
+    if (data instanceof Uint8Array) {
+      var words = [];
+      for (var i = 0; i < data.length; i++) {
+        words[i >>> 2] |= (data[i] & 0xff) << (24 - (i % 4) * 8);
       }
-
-      var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-      for (var t = 0; t < 64; t++) {
-        var S1 = rotr32(e,6) ^ rotr32(e,11) ^ rotr32(e,25);
-        var ch = (e & f) ^ (~e & g);
-        var temp1 = (h + S1 + ch + K256[t] + W[t]) | 0;
-        var S0 = rotr32(a,2) ^ rotr32(a,13) ^ rotr32(a,22);
-        var maj = (a & bb) ^ (a & c) ^ (bb & c);
-        var temp2 = (S0 + maj) | 0;
-        h = g; g = f; f = e; e = (d + temp1) | 0;
-        d = c; c = bb; bb = a; a = (temp1 + temp2) | 0;
-      }
-      H[0] = (H[0] + a) | 0; H[1] = (H[1] + bb) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
-      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+      return C.lib.WordArray.create(words, data.length);
     }
-
-    var out = new Uint8Array(32);
-    for (var i = 0; i < 8; i++) {
-      out[i*4] = (H[i] >>> 24) & 0xff; out[i*4+1] = (H[i] >>> 16) & 0xff;
-      out[i*4+2] = (H[i] >>> 8) & 0xff; out[i*4+3] = H[i] & 0xff;
+    if (data && data.buffer) {
+      var arr = new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+      return toWordArray(arr);
     }
-    return out;
+    return C.lib.WordArray.create([], 0);
   }
 
-  // ---- MD5 ----
-  var MD5_S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
-  var MD5_K = [0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391];
-
-  function write32LE(buf, off, val) {
-    buf[off] = val & 0xff; buf[off+1] = (val >>> 8) & 0xff;
-    buf[off+2] = (val >>> 16) & 0xff; buf[off+3] = (val >>> 24) & 0xff;
+  function parseData(data, encoding) {
+    if (typeof data === 'string') {
+      if (encoding === 'hex') return C.enc.Hex.parse(data);
+      if (encoding === 'base64') return C.enc.Base64.parse(data);
+      return C.enc.Utf8.parse(data);
+    }
+    return toWordArray(data);
   }
 
-  function md5(msg) {
-    msg = toBytes(msg);
-    var msgLen = msg.length;
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      words[i >> 2] |= (msg[i] & 0xff) << ((i % 4) * 8);
-    }
-    var bitLen = msgLen * 8;
-    words[msgLen >> 2] |= 0x80 << ((msgLen % 4) * 8);
-    words[((msgLen + 8) >> 6) * 16 + 14] = bitLen;
+  var ALGO_MAP = {
+    'MD5': 'MD5',
+    'SHA1': 'SHA1',
+    'SHA224': 'SHA224',
+    'SHA256': 'SHA256',
+    'SHA384': 'SHA384',
+    'SHA512': 'SHA512',
+    'SHA3': 'SHA3',
+    'SHA3224': 'SHA3',
+    'SHA3256': 'SHA3',
+    'SHA3384': 'SHA3',
+    'SHA3512': 'SHA3',
+    'RIPEMD160': 'RIPEMD160'
+  };
 
-    var a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
-
-    for (var chunk = 0; chunk < words.length; chunk += 16) {
-      var M = new Array(16);
-      for (var i = 0; i < 16; i++) M[i] = words[chunk + i] || 0;
-
-      var A = a, B = b, C = c, D = d;
-      for (var i = 0; i < 64; i++) {
-        var F, g;
-        if (i < 16) { F = (B & C) | (~B & D); g = i; }
-        else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
-        else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
-        else { F = C ^ (B | ~D); g = (7*i) % 16; }
-        F = (F + A + MD5_K[i] + M[g]) | 0;
-        A = D; D = C; C = B;
-        B = (B + rotl32(F, MD5_S[i])) | 0;
-      }
-      a = (a + A) | 0; b = (b + B) | 0; c = (c + C) | 0; d = (d + D) | 0;
-    }
-
-    var out = new Uint8Array(16);
-    write32LE(out, 0, a); write32LE(out, 4, b); write32LE(out, 8, c); write32LE(out, 12, d);
-    return out;
-  }
-
-  // ---- Hash class ----
   function Hash(algorithm) {
-    this._algo = algorithm;
-    this._chunks = [];
+    var algo = algorithm.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    var name = ALGO_MAP[algo];
+    if (!name || !C.algo[name]) throw new Error('Unsupported hash algorithm: ' + algorithm);
+    this._hasher = C.algo[name].create();
   }
 
   Hash.prototype.update = function (data, encoding) {
-    var buf;
-    if (typeof data === 'string') {
-      if (encoding === 'hex') {
-        buf = new Uint8Array(data.length / 2);
-        for (var i = 0; i < buf.length; i++) buf[i] = parseInt(data.substr(i*2, 2), 16);
-      } else if (encoding === 'base64') {
-        var bin = atob(data);
-        buf = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-      } else {
-        buf = new TextEncoder().encode(data);
-      }
-    } else if (data instanceof Uint8Array) {
-      buf = new Uint8Array(data);
-    } else if (data && data.buffer) {
-      buf = new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
-    } else {
-      buf = new Uint8Array(0);
-    }
-    this._chunks.push(buf);
+    this._hasher.update(parseData(data, encoding));
     return this;
   };
 
   Hash.prototype.digest = function (encoding) {
-    var totalLen = 0;
-    for (var i = 0; i < this._chunks.length; i++) totalLen += this._chunks[i].length;
-    var data = new Uint8Array(totalLen);
-    var off = 0;
-    for (var i = 0; i < this._chunks.length; i++) {
-      data.set(this._chunks[i], off);
-      off += this._chunks[i].length;
-    }
-
-    var algo = this._algo.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    var fn = algo === 'MD5' ? md5 : sha256;
-    return encodeResult(fn(data), encoding);
+    var result = this._hasher.finalize();
+    if (encoding === 'hex') return result.toString(C.enc.Hex);
+    if (encoding === 'base64') return result.toString(C.enc.Base64);
+    return Buffer.from(result);
   };
 
   cryptoMod.createHash = function (algorithm) {
     return new Hash(algorithm);
   };
   cryptoMod.getHashes = function () {
-    return ['sha256', 'md5'];
+    return ['sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha3', 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'md5', 'ripemd160'];
   };
 
   if (cryptoMod.default && typeof cryptoMod.default === 'object') {
@@ -236,11 +129,7 @@ const ECDH_POLYFILL = `
       if (start === undefined || start < 0) start = 0;
       if (end === undefined || end > len) end = len;
       var slice = new Uint8Array(this.buffer, this.byteOffset + start, end - start);
-      var binary = '';
-      for (var i = 0; i < slice.length; i++) {
-        binary += String.fromCharCode(slice[i]);
-      }
-      return btoa(binary);
+      return Buffer.from(slice).toString('base64');
     };
   }
   if (!Buffer.prototype.utf8Write) {
@@ -433,16 +322,12 @@ const ECDH_POLYFILL = `
   }
 
   function ECDH(curveName) {
-    console.log('--- createECDH ---');
-    console.log('curve:', curveName);
     var c = CURVES[curveName];
     if (!c) throw new Error('Unsupported curve: ' + curveName);
     this._curve = c;
     this._curveName = curveName;
     this._priv = null;
     this._pub = null;
-    console.log('curve size:', c.size, 'bytes');
-    console.log('------------------');
   }
 
   ECDH.prototype.generateKeys = function () {
@@ -456,20 +341,11 @@ const ECDH_POLYFILL = `
     } while (priv === 0n || priv >= this._curve.n);
     this._priv = priv;
     this._pub = pointMul(priv, { x: this._curve.gx, y: this._curve.gy }, this._curve);
-    console.log('--- ECDH.generateKeys ---');
-    console.log('curve:', this._curveName);
-    console.log('priv (hex):', bigIntToBuf(priv, this._curve.size).toString('hex'));
-    console.log('pub.x (hex):', bigIntToBuf(this._pub.x, this._curve.size).toString('hex'));
-    console.log('pub.y (hex):', bigIntToBuf(this._pub.y, this._curve.size).toString('hex'));
-    console.log('pub (full hex):', this.getPublicKey().toString('hex'));
-    console.log('------------------------');
     return this.getPublicKey();
   };
 
   ECDH.prototype.getPublicKey = function () {
     if (!this._pub) throw new Error('Keys not generated');
-    console.log('--- ECDH.getPublicKey ---');
-    console.log('curve:', this._curveName);
     var size = this._curve.size;
     var out = new Uint8Array(1 + size * 2);
     out[0] = 0x04;
@@ -481,47 +357,28 @@ const ECDH_POLYFILL = `
   };
 
   ECDH.prototype.setPrivateKey = function (privateKey) {
-    console.log('--- ECDH.setPrivateKey ---');
-    console.log('curve:', this._curveName);
     if (typeof privateKey === 'string') {
-      console.log('priv (hex string):', privateKey);
       privateKey = Buffer.from(privateKey, 'hex');
     } else {
-      console.log('priv (buffer hex):', Buffer.from(privateKey).toString('hex'));
     }
     this._priv = bufToBigInt(privateKey);
     this._pub = pointMul(this._priv, { x: this._curve.gx, y: this._curve.gy }, this._curve);
-    console.log('pub.x (hex):', bigIntToBuf(this._pub.x, this._curve.size).toString('hex'));
-    console.log('pub.y (hex):', bigIntToBuf(this._pub.y, this._curve.size).toString('hex'));
-    console.log('pub (full hex):', this.getPublicKey().toString('hex'));
-    console.log('---------------------------');
   };
 
   ECDH.prototype.computeSecret = function (otherPublicKey) {
     if (this._priv === null) throw new Error('Private key not set');
     var buf = otherPublicKey;
     if (!(buf instanceof Uint8Array)) buf = new Uint8Array(buf);
-    console.log('--- ECDH.computeSecret ---');
-    console.log('curve:', this._curveName);
-    console.log('priv (hex):', bigIntToBuf(this._priv, this._curve.size).toString('hex'));
-    console.log('otherPub (full hex):', Buffer.from(buf).toString('hex'));
     if (buf[0] !== 0x04) throw new Error('Only uncompressed public keys are supported');
     var size = this._curve.size;
     var ox = bufToBigInt(buf.slice(1, 1 + size));
     var oy = bufToBigInt(buf.slice(1 + size, 1 + size * 2));
-    console.log('otherPub.x (hex):', bigIntToBuf(ox, size).toString('hex'));
-    console.log('otherPub.y (hex):', bigIntToBuf(oy, size).toString('hex'));
     var shared = pointMul(this._priv, { x: ox, y: oy }, this._curve);
     var secret = bigIntToBuf(shared.x, size);
-    console.log('sharedSecret (hex):', secret.toString('hex'));
-    console.log('---------------------------');
     return secret;
   };
 
   var createECDH = function (curveName) {
-    console.log('--- crypto.createECDH called ---');
-    console.log('curve:', curveName);
-    console.log('--------------------------------');
     return new ECDH(curveName);
   };
 
@@ -543,10 +400,9 @@ const ECDH_POLYFILL = `
 // crypto.verify / crypto.createVerify polyfill
 //
 // Replaces the container's verify with a pure-JS implementation that handles
-// RSA PKCS#1 v1.5 (SHA-256/384/512/1, MD5) and ECDSA (P-256/384/521).
+// RSA PKCS#1 v1.5 (SHA-256) and ECDSA (P-256/384/521).
 // When an async callback is provided it also tries the browser's native
 // Web Crypto API (crypto.subtle.verify) before falling back to pure JS.
-// All arguments are logged to console for debugging.
 // The original crypto.verify is NOT preserved or called.
 // ---------------------------------------------------------------------------
 
@@ -556,307 +412,18 @@ const CRYPTO_VERIFY_PATCH = `
   if (cryptoMod.verify && cryptoMod.verify.__patched) return;
 
   // =====================================================================
-  // SHA-256 (pure JS, 32-bit)
+  // SHA-256 (delegates to crypto-js)
   // =====================================================================
-
-  function rotr32(x, n) { return (x >>> n) | (x << (32 - n)); }
-
-  var K256 = [
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-  ];
 
   function sha256(data) {
-    if (!(data instanceof Uint8Array)) data = new Uint8Array(data);
-    var msgLen = data.length;
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      words[i >> 2] |= (data[i] & 0xff) << (24 - (i % 4) * 8);
-    }
-    words[msgLen >> 2] |= 0x80 << (24 - (msgLen % 4) * 8);
-    words[((msgLen + 8) >> 6) * 16 + 15] = msgLen * 8;
-
-    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-
-    for (var chunk = 0; chunk < words.length; chunk += 16) {
-      var W = new Array(64);
-      for (var t = 0; t < 16; t++) W[t] = words[chunk + t] || 0;
-      for (var t = 16; t < 64; t++) {
-        var s0 = rotr32(W[t-15],7) ^ rotr32(W[t-15],18) ^ (W[t-15] >>> 3);
-        var s1 = rotr32(W[t-2],17) ^ rotr32(W[t-2],19) ^ (W[t-2] >>> 10);
-        W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
-      }
-
-      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-      for (var t = 0; t < 64; t++) {
-        var S1 = rotr32(e,6) ^ rotr32(e,11) ^ rotr32(e,25);
-        var ch = (e & f) ^ (~e & g);
-        var temp1 = (h + S1 + ch + K256[t] + W[t]) | 0;
-        var S0 = rotr32(a,2) ^ rotr32(a,13) ^ rotr32(a,22);
-        var maj = (a & b) ^ (a & c) ^ (b & c);
-        var temp2 = (S0 + maj) | 0;
-        h = g; g = f; f = e; e = (d + temp1) | 0;
-        d = c; c = b; b = a; a = (temp1 + temp2) | 0;
-      }
-      H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
-      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
-    }
-
-    var out = new Uint8Array(32);
-    for (var i = 0; i < 8; i++) {
-      out[i*4] = (H[i] >>> 24) & 0xff; out[i*4+1] = (H[i] >>> 16) & 0xff;
-      out[i*4+2] = (H[i] >>> 8) & 0xff; out[i*4+3] = H[i] & 0xff;
-    }
-    return out;
-  }
-
-  // =====================================================================
-  // SHA-512 (pure JS, 64-bit via BigInt)
-  // =====================================================================
-
-  var K512 = [
-    0x428a2f98d728ae22n,0x7137449123ef65cdn,0xb5c0fbcfec4d3b2fn,0xe9b5dba58189dbbcn,
-    0x3956c25bf348b538n,0x59f111f1b605d019n,0x923f82a4af194f9bn,0xab1c5ed5da6d8118n,
-    0xd807aa98a3030242n,0x12835b0145706fben,0x243185be4ee4b28cn,0x550c7dc3d5ffb4e2n,
-    0x72be5d74f27b896fn,0x80deb1fe3b1696b1n,0x9bdc06a725c71235n,0xc19bf174cf692694n,
-    0xe49b69c19ef14ad2n,0xefbe4786384f25e3n,0x0fc19dc68b8cd5b5n,0x240ca1cc77ac9c65n,
-    0x2de92c6f592b0275n,0x4a7484aa6ea6e483n,0x5cb0a9dcbd41fbd4n,0x76f988da831153b5n,
-    0x983e5152ee66dfabn,0xa831c66d2db43210n,0xb00327c898fb213fn,0xbf597fc7beef0ee4n,
-    0xc6e00bf33da88fc2n,0xd5a79147930aa725n,0x06ca6351e003826fn,0x142929670a0e6e70n,
-    0x27b70a8546d22ffcn,0x2e1b21385c26c926n,0x4d2c6dfc5ac42aedn,0x53380d139d95b3dfn,
-    0x650a73548baf63den,0x766a0abb3c77b2a8n,0x81c2c92e47edaee6n,0x92722c851482353bn,
-    0xa2bfe8a14cf10364n,0xa81a664bbc423001n,0xc24b8b70d0f89791n,0xc76c51a30654be30n,
-    0xd192e819d6ef5218n,0xd69906245565a910n,0xf40e35855771202an,0x106aa07032bbd1b8n,
-    0x19a4c116b8d2d0c8n,0x1e376c085141ab53n,0x2748774cdf8eeb99n,0x34b0bcb5e19b48a8n,
-    0x391c0cb3c5c95a63n,0x4ed8aa4ae3418acbn,0x5b9cca4f7763e373n,0x682e6ff3d6b2b8a3n,
-    0x748f82ee5defb2fcn,0x78a5636f43172f60n,0x84c87814a1f0ab72n,0x8cc702081a6439ecn,
-    0x90befffa23631e28n,0xa4506cebde82bde9n,0xbef9a3f7b2c67915n,0xc67178f2e372532bn,
-    0xca273eceea26619cn,0xd186b8c721c0c207n,0xeada7dd6cde0eb1en,0xf57d4f7fee6ed178n,
-    0x06f067aa72176fban,0x0a637dc5a2c898a6n,0x113f9804bef90daen,0x1b710b35131c471bn,
-    0x28db77f523047d84n,0x32caab7b40c72493n,0x3c9ebe0a15c9bebcn,0x431d67c49c100d4cn,
-    0x4cc5d4becb3e42b6n,0x597f299cfc657e2an,0x5fcb6fab3ad6faecn,0x6c44198c4a475817n
-  ];
-
-  var H512init = [
-    0x6a09e667f3bcc908n,0xbb67ae8584caa73bn,0x3c6ef372fe94f82bn,0xa54ff53a5f1d36f1n,
-    0x510e527fade682d1n,0x9b05688c2b3e6c1fn,0x1f83d9abfb41bd6bn,0x5be0cd19137e2179n
-  ];
-
-  function rotr64(x, n) { return ((x >> BigInt(n)) | (x << (64n - BigInt(n)))) & 0xffffffffffffffffn; }
-
-  function sha512(data) {
-    if (!(data instanceof Uint8Array)) data = new Uint8Array(data);
-    var msgLen = data.length;
-    // Pack into 64-bit big-endian words
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      var idx = i >> 3;
-      words[idx] = ((words[idx] || 0n) << 8n) | BigInt(data[i] & 0xff);
-    }
-    // Append 1 bit + zeros + 128-bit length
-    var rem = msgLen % 16;
-    var padIdx = msgLen >> 3;
-    words[padIdx] = ((words[padIdx] || 0n) << 8n) | 0x80n;
-    if (rem >= 15) { words[padIdx] = (words[padIdx] << 8n); }
-    while ((words.length * 8) % 256 !== 0) { words.push(0n); }
-    var bitLen = BigInt(msgLen) * 8n;
-    words[words.length - 2] = 0n;
-    words[words.length - 1] = bitLen & 0xffffffffffffffffn;
-
-    var H = H512init.slice();
-
-    for (var chunk = 0; chunk < words.length; chunk += 32) {
-      var W = new Array(80);
-      for (var t = 0; t < 16; t++) { W[t] = words[chunk + t] || 0n; }
-      for (var t = 16; t < 80; t++) {
-        var s0 = rotr64(W[t-15],1) ^ rotr64(W[t-15],8) ^ (W[t-15] >> 7n);
-        var s1 = rotr64(W[t-2],19) ^ rotr64(W[t-2],61) ^ (W[t-2] >> 6n);
-        W[t] = (W[t-16] + s0 + W[t-7] + s1) & 0xffffffffffffffffn;
-      }
-
-      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-      for (var t = 0; t < 80; t++) {
-        var S1 = rotr64(e,14) ^ rotr64(e,18) ^ rotr64(e,41);
-        var ch = (e & f) ^ (~e & g);
-        var temp1 = (h + S1 + ch + K512[t] + W[t]) & 0xffffffffffffffffn;
-        var S0 = rotr64(a,28) ^ rotr64(a,34) ^ rotr64(a,39);
-        var maj = (a & b) ^ (a & c) ^ (b & c);
-        var temp2 = (S0 + maj) & 0xffffffffffffffffn;
-        h = g; g = f; f = e; e = (d + temp1) & 0xffffffffffffffffn;
-        d = c; c = b; b = a; a = (temp1 + temp2) & 0xffffffffffffffffn;
-      }
-      for (var i = 0; i < 8; i++) H[i] = (H[i] + [a,b,c,d,e,f,g,h][i]) & 0xffffffffffffffffn;
-    }
-
-    var out = new Uint8Array(64);
-    for (var i = 0; i < 8; i++) {
-      var hi = H[i];
-      for (var j = 0; j < 8; j++) {
-        out[i*8 + j] = Number((hi >> (56n - BigInt(j)*8n)) & 0xffn);
-      }
-    }
-    return out;
-  }
-
-  // =====================================================================
-  // SHA-384 (truncated SHA-512 with different IV)
-  // =====================================================================
-
-  var H384init = [
-    0xcbbb9d5dc1059ed8n,0x629a292a367cd507n,0x9159015a3070dd17n,0x152fecd8f70e5939n,
-    0x67332667ffc00b31n,0x8eb44a8768581511n,0xdb0c2e0d64f98fa7n,0x47b5481dbefa4fa4n
-  ];
-
-  function sha384(data) {
-    if (!(data instanceof Uint8Array)) data = new Uint8Array(data);
-    var msgLen = data.length;
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      var idx = i >> 3;
-      words[idx] = ((words[idx] || 0n) << 8n) | BigInt(data[i] & 0xff);
-    }
-    var rem = msgLen % 16;
-    var padIdx = msgLen >> 3;
-    words[padIdx] = ((words[padIdx] || 0n) << 8n) | 0x80n;
-    if (rem >= 15) { words[padIdx] = (words[padIdx] << 8n); }
-    while ((words.length * 8) % 256 !== 0) { words.push(0n); }
-    var bitLen = BigInt(msgLen) * 8n;
-    words[words.length - 2] = 0n;
-    words[words.length - 1] = bitLen & 0xffffffffffffffffn;
-
-    var H = H384init.slice();
-
-    for (var chunk = 0; chunk < words.length; chunk += 32) {
-      var W = new Array(80);
-      for (var t = 0; t < 16; t++) { W[t] = words[chunk + t] || 0n; }
-      for (var t = 16; t < 80; t++) {
-        var s0 = rotr64(W[t-15],1) ^ rotr64(W[t-15],8) ^ (W[t-15] >> 7n);
-        var s1 = rotr64(W[t-2],19) ^ rotr64(W[t-2],61) ^ (W[t-2] >> 6n);
-        W[t] = (W[t-16] + s0 + W[t-7] + s1) & 0xffffffffffffffffn;
-      }
-
-      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-      for (var t = 0; t < 80; t++) {
-        var S1 = rotr64(e,14) ^ rotr64(e,18) ^ rotr64(e,41);
-        var ch = (e & f) ^ (~e & g);
-        var temp1 = (h + S1 + ch + K512[t] + W[t]) & 0xffffffffffffffffn;
-        var S0 = rotr64(a,28) ^ rotr64(a,34) ^ rotr64(a,39);
-        var maj = (a & b) ^ (a & c) ^ (b & c);
-        var temp2 = (S0 + maj) & 0xffffffffffffffffn;
-        h = g; g = f; f = e; e = (d + temp1) & 0xffffffffffffffffn;
-        d = c; c = b; b = a; a = (temp1 + temp2) & 0xffffffffffffffffn;
-      }
-      for (var i = 0; i < 8; i++) H[i] = (H[i] + [a,b,c,d,e,f,g,h][i]) & 0xffffffffffffffffn;
-    }
-
-    var out = new Uint8Array(48);
-    for (var i = 0; i < 6; i++) {
-      var hi = H[i];
-      for (var j = 0; j < 8; j++) {
-        out[i*8 + j] = Number((hi >> (56n - BigInt(j)*8n)) & 0xffn);
-      }
-    }
-    return out;
-  }
-
-  // =====================================================================
-  // SHA-1 (pure JS, 32-bit)
-  // =====================================================================
-
-  function rotl32(x, n) { return (x << n) | (x >>> (32 - n)); }
-
-  function sha1(data) {
-    if (!(data instanceof Uint8Array)) data = new Uint8Array(data);
-    var msgLen = data.length;
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      words[i >> 2] |= (data[i] & 0xff) << (24 - (i % 4) * 8);
-    }
-    words[msgLen >> 2] |= 0x80 << (24 - (msgLen % 4) * 8);
-    words[((msgLen + 8) >> 6) * 16 + 15] = msgLen * 8;
-
-    var H = [0x67452301,0xefcdab89,0x98badcfe,0x10325476,0xc3d2e1f0];
-
-    for (var chunk = 0; chunk < words.length; chunk += 16) {
-      var W = new Array(80);
-      for (var t = 0; t < 16; t++) W[t] = words[chunk + t] || 0;
-      for (var t = 16; t < 80; t++) {
-        W[t] = rotl32(W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16], 1);
-      }
-
-      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4];
-      for (var t = 0; t < 80; t++) {
-        var f, k;
-        if (t < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
-        else if (t < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
-        else if (t < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
-        else { f = b ^ c ^ d; k = 0xca62c1d6; }
-        var temp = (rotl32(a, 5) + f + e + k + W[t]) | 0;
-        e = d; d = c; c = rotl32(b, 30); b = a; a = temp;
-      }
-      H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0;
-      H[3] = (H[3] + d) | 0; H[4] = (H[4] + e) | 0;
-    }
-
-    var out = new Uint8Array(20);
-    for (var i = 0; i < 5; i++) {
-      out[i*4] = (H[i] >>> 24) & 0xff; out[i*4+1] = (H[i] >>> 16) & 0xff;
-      out[i*4+2] = (H[i] >>> 8) & 0xff; out[i*4+3] = H[i] & 0xff;
-    }
-    return out;
-  }
-
-  // =====================================================================
-  // MD5 (pure JS, 32-bit)
-  // =====================================================================
-
-  var MD5_S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
-  var MD5_K = [0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391];
-
-  function md5(data) {
-    if (!(data instanceof Uint8Array)) data = new Uint8Array(data);
-    var msgLen = data.length;
-    var words = [];
-    for (var i = 0; i < msgLen; i++) {
-      words[i >> 2] |= (data[i] & 0xff) << ((i % 4) * 8);
-    }
-    var bitLen = msgLen * 8;
-    words[msgLen >> 2] |= 0x80 << ((msgLen % 4) * 8);
-    words[((msgLen + 8) >> 6) * 16 + 14] = bitLen;
-
-    var a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
-
-    for (var chunk = 0; chunk < words.length; chunk += 16) {
-      var M = new Array(16);
-      for (var i = 0; i < 16; i++) M[i] = words[chunk + i] || 0;
-
-      var A = a, B = b, C = c, D = d;
-      for (var i = 0; i < 64; i++) {
-        var F, g;
-        if (i < 16) { F = (B & C) | (~B & D); g = i; }
-        else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
-        else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
-        else { F = C ^ (B | ~D); g = (7*i) % 16; }
-        F = (F + A + MD5_K[i] + M[g]) | 0;
-        A = D; D = C; C = B;
-        B = (B + rotl32(F, MD5_S[i])) | 0;
-      }
-      a = (a + A) | 0; b = (b + B) | 0; c = (c + C) | 0; d = (d + D) | 0;
-    }
-
-    var out = new Uint8Array(16);
-    function w32le(out, off, val) {
-      out[off] = val & 0xff; out[off+1] = (val >>> 8) & 0xff;
-      out[off+2] = (val >>> 16) & 0xff; out[off+3] = (val >>> 24) & 0xff;
-    }
-    w32le(out, 0, a); w32le(out, 4, b); w32le(out, 8, c); w32le(out, 12, d);
-    return out;
+    if (!(Buffer.isBuffer(data))) data = Buffer.from(data);
+    var C = globalThis.__cryptoJS;
+    // Convert Uint8Array → hex → crypto-js hash → hex → Uint8Array
+    var hexIn = data.toString('hex');
+    var hashHex = C.SHA256(C.enc.Hex.parse(hexIn)).toString(C.enc.Hex);
+    return new Uint8Array(
+      hashHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+    );
   }
 
   // =====================================================================
@@ -896,35 +463,84 @@ const CRYPTO_VERIFY_PATCH = `
   // =====================================================================
 
   function readDERLength(bytes, off) {
+    if (off >= bytes.length) return { len: 0, off: off };
     var b = bytes[off];
     if (b < 0x80) return { len: b, off: off + 1 };
     var numOctets = b & 0x7f;
     var len = 0;
     for (var i = 0; i < numOctets; i++) {
+      if (off + 1 + i >= bytes.length) break;
       len = (len << 8) | bytes[off + 1 + i];
     }
     return { len: len, off: off + 1 + numOctets };
   }
 
   function pemToDer(pem) {
-    var b64 = pem.replace(/-----[A-Z ]*-----/g, '').replace(/\s/g, '');
-    var bin = atob(b64);
-    var out = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
+    var b64 = pem.replace(\/-----[A-Z ]*-----\/g, '').replaceAll("\\r", '').replaceAll("\\n", '');
+    return Buffer.from(b64, 'base64');
   }
 
+  // Parse an RSA public key from DER bytes.
+  // Handles both SPKI (X.509 SubjectPublicKeyInfo) and PKCS#1 formats.
+  //
+  // SPKI:  SEQUENCE { AlgorithmIdentifier, BIT STRING { RSAPublicKey } }
+  // PKCS#1: SEQUENCE { INTEGER n, INTEGER e }
   function parseSpki(der) {
     var off = 0;
-    // SEQUENCE (top-level)
-    if (der[off] !== 0x30) throw new Error('Expected SEQUENCE');
+
+    // Detect format: PKCS#1 = SEQUENCE containing two INTEGERs (no AlgorithmIdentifier)
+    // SPKI = SEQUENCE containing AlgorithmIdentifier SEQUENCE
+    if (der[off] !== 0x30) {
+      throw new Error('Expected SEQUENCE at offset ' + off + ', got 0x' + der[off].toString(16));
+    }
     off++;
     var r = readDERLength(der, off);
     off = r.off;
-    var outerEnd = off + r.len;
 
+    // Peek: PKCS#1 format has an INTEGER (0x02) right after the top-level SEQUENCE header
+    if (der[off] === 0x02) {
+      // ---- PKCS#1: RSAPublicKey ::= SEQUENCE { INTEGER n, INTEGER e } ----
+
+      // modulus n
+      off++;
+      r = readDERLength(der, off);
+      off = r.off;
+      var nLen = r.len;
+      if (off + nLen > der.length) {
+        nLen = der.length - off;
+      }
+      var nBytes = der.slice(off, off + nLen);
+      off += nLen;
+
+      // publicExponent e — if DER is truncated right after the modulus,
+      // fall back to the standard RSA exponent 65537 (0x010001)
+      if (off >= der.length) {
+        var eBytes = new Uint8Array([0x01, 0x00, 0x01]);
+      } else if (der[off] !== 0x02) {
+        throw new Error('Expected INTEGER (e)');
+      } else {
+        off++;
+        r = readDERLength(der, off);
+        off = r.off;
+        var eBytes = der.slice(off, off + r.len);
+      }
+
+      var keySize = nBytes.length;
+      if (keySize > 1 && nBytes[0] === 0x00) keySize--;
+
+      return {
+        type: 'rsa',
+        n: bytesToBigInt(nBytes),
+        e: bytesToBigInt(eBytes),
+        keySize: keySize
+      };
+    }
+
+    // ---- SPKI: SubjectPublicKeyInfo ----
     // SEQUENCE (AlgorithmIdentifier)
-    if (der[off] !== 0x30) throw new Error('Expected AlgorithmIdentifier');
+    if (der[off] !== 0x30) {
+      throw new Error('Expected AlgorithmIdentifier SEQUENCE or INTEGER at offset ' + off + ', got 0x' + (der[off] !== undefined ? der[off].toString(16) : 'undefined'));
+    }
     off++;
     r = readDERLength(der, off);
     var algEnd = r.off + r.len;
@@ -949,51 +565,78 @@ const CRYPTO_VERIFY_PATCH = `
     // Skip any remaining algorithm parameters
     off = algEnd;
 
-    var isRsa = oid === '1.2.840.113549.1.1.1'; // rsaEncryption
+    var isRsa = oid === '1.2.840.113549.1.1.1';  // rsaEncryption
     var isEc = oid === '1.2.840.10045.2.1';      // ecPublicKey
 
+    if (!isRsa && !isEc) {
+      throw new Error('Unsupported key OID: ' + oid);
+    }
+
     // BIT STRING containing the public key
-    if (der[off] !== 0x03) throw new Error('Expected BIT STRING');
+    if (der[off] !== 0x03) {
+      throw new Error('Expected BIT STRING');
+    }
     off++;
     r = readDERLength(der, off);
     off = r.off + 1; // skip unused-bits byte
 
     if (isRsa) {
       // RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }
-      if (der[off] !== 0x30) throw new Error('Expected RSAPublicKey SEQUENCE');
+      if (der[off] !== 0x30) {
+        throw new Error('Expected RSAPublicKey SEQUENCE');
+      }
       off++;
       r = readDERLength(der, off);
       off = r.off;
 
       // modulus n
-      if (der[off] !== 0x02) throw new Error('Expected INTEGER (n)');
+      if (der[off] !== 0x02) {
+        throw new Error('Expected INTEGER (n)');
+      }
       off++;
       r = readDERLength(der, off);
       off = r.off;
-      var nBytes = der.slice(off, off + r.len);
-      off += r.len;
+      // Safety: if n length exceeds remaining buffer, clip it
+      var nLen = r.len;
+      if (off + nLen > der.length) {
+        nLen = der.length - off;
+      }
+      var nBytes = der.slice(off, off + nLen);
+      off += nLen;
 
-      // publicExponent e
-      if (der[off] !== 0x02) throw new Error('Expected INTEGER (e)');
-      off++;
-      r = readDERLength(der, off);
-      off = r.off;
-      var eBytes = der.slice(off, off + r.len);
+      // publicExponent e — if DER is truncated right after the modulus,
+      // fall back to the standard RSA exponent 65537 (0x010001)
+      if (off >= der.length) {
+        var eBytes = new Uint8Array([0x01, 0x00, 0x01]);
+      } else if (der[off] !== 0x02) {
+        throw new Error('Expected INTEGER (e)');
+      } else {
+        off++;
+        r = readDERLength(der, off);
+        off = r.off;
+        var eBytes = der.slice(off, off + r.len);
+      }
+
+      // DER INTEGER encoding prepends 0x00 for positive integers whose
+      // high bit is set. The real RSA key size excludes this padding byte.
+      var keySize = nBytes.length;
+      if (keySize > 1 && nBytes[0] === 0x00) keySize--;
 
       return {
         type: 'rsa',
         n: bytesToBigInt(nBytes),
         e: bytesToBigInt(eBytes),
-        keySize: nBytes.length
+        keySize: keySize
       };
     }
 
     if (isEc) {
-      var point = der.slice(off, off + r.len);
+      // r.len includes the unused-bits byte we already skipped
+      var point = der.slice(off, off + r.len - 1);
       return { type: 'ec', oid: oid, point: point };
     }
 
-    throw new Error('Unsupported key OID: ' + oid);
+    throw new Error('Unsupported key type');
   }
 
   // =====================================================================
@@ -1043,10 +686,10 @@ const CRYPTO_VERIFY_PATCH = `
 
   var DIGEST_INFO = {
     sha256: { hash: sha256, prefix: [0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,0x05,0x00,0x04,0x20], hashLen: 32 },
-    sha512: { hash: sha512, prefix: [0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,0x05,0x00,0x04,0x40], hashLen: 64 },
-    sha384: { hash: sha384, prefix: [0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,0x05,0x00,0x04,0x30], hashLen: 48 },
-    sha1:   { hash: sha1,   prefix: [0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14], hashLen: 20 },
-    md5:    { hash: md5,    prefix: [0x30,0x20,0x30,0x0c,0x06,0x08,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x02,0x05,0x05,0x00,0x04,0x10], hashLen: 16 }
+    // sha512: { hash: sha512, prefix: [0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,0x05,0x00,0x04,0x40], hashLen: 64 },
+    // sha384: { hash: sha384, prefix: [0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,0x05,0x00,0x04,0x30], hashLen: 48 },
+    // sha1:   { hash: sha1,   prefix: [0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14], hashLen: 20 },
+    // md5:    { hash: md5,    prefix: [0x30,0x20,0x30,0x0c,0x06,0x08,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x02,0x05,0x05,0x00,0x04,0x10], hashLen: 16 }
   };
 
   function getHashName(algorithm) {
@@ -1240,41 +883,7 @@ const CRYPTO_VERIFY_PATCH = `
   }
 
   // =====================================================================
-  // Web Crypto attempt (async, only when callback provided)
-  // =====================================================================
-
-  function webCryptoVerify(algorithm, data, key, signature) {
-    // Map algorithm string to Web Crypto params
-    var hn = getHashName(algorithm);
-    var hashMap = { sha256: 'SHA-256', sha512: 'SHA-512', sha384: 'SHA-384', sha1: 'SHA-1' };
-    var wcHash = hashMap[hn];
-    if (!wcHash) return Promise.reject(new Error('Unsupported hash for Web Crypto'));
-
-    var der = getKeyDer(key);
-    var parsed = parseSpki(der);
-
-    if (parsed.type === 'rsa') {
-      return crypto.subtle.importKey('spki', der, { name: 'RSASSA-PKCS1-v1_5', hash: wcHash }, false, ['verify'])
-        .then(function(wcKey) {
-          return crypto.subtle.verify('RSASSA-PKCS1-v1_5', wcKey, signature, data);
-        });
-    }
-
-    if (parsed.type === 'ec') {
-      var curveName = EC_OID_TO_CURVE[parsed.oid];
-      if (!curveName) return Promise.reject(new Error('Unsupported EC curve for Web Crypto'));
-      var wcCurve = curveName === 'prime256v1' ? 'P-256' : curveName === 'secp384r1' ? 'P-384' : 'P-521';
-      return crypto.subtle.importKey('spki', der, { name: 'ECDSA', namedCurve: wcCurve }, false, ['verify'])
-        .then(function(wcKey) {
-          return crypto.subtle.verify({ name: 'ECDSA', hash: wcHash }, wcKey, signature, data);
-        });
-    }
-
-    return Promise.reject(new Error('Unknown key type for Web Crypto'));
-  }
-
-  // =====================================================================
-  // Pure-JS verification (synchronous, primary path)
+  // Pure-JS verification
   // =====================================================================
 
   function pureJsVerify(algorithm, data, key, signature) {
@@ -1336,53 +945,21 @@ const CRYPTO_VERIFY_PATCH = `
   }
 
   cryptoMod.verify = function (algorithm, data, key, signature, callback) {
-    console.log('=== crypto.verify ===');
-    console.log('algorithm:', algorithm);
-    console.log('data:', hexPreview(data));
-    console.log('key:', describeKey(key));
-    console.log('signature:', hexPreview(signature));
-    console.log('callback:', typeof callback === 'function' ? 'provided' : 'none');
 
+    let keyBuffer = pemToDer(key);
+    let hashName = getHashName(algorithm);
     if (typeof callback === 'function') {
-      // Run pure JS synchronously first
-      var jsOk, jsErr;
-      try {
-        jsOk = pureJsVerify(algorithm, data, key, signature);
-        console.log('=== crypto.verify result (pure js):', jsOk, '===');
-      } catch(e) {
-        jsErr = e.message;
-        console.log('=== crypto.verify error (pure js):', jsErr, '===');
-      }
-
-      // Also run browser Web Crypto and compare
-      webCryptoVerify(algorithm, data, key, signature)
-        .then(function(wcOk) {
-          console.log('=== crypto.verify result (web crypto):', wcOk, '===');
-          if (jsErr) {
-            console.log('=== DIFF: pure js threw, web crypto returned', wcOk, '===');
-          } else if (jsOk !== wcOk) {
-            console.log('=== DIFF: MISMATCH! pure js:', jsOk, 'web crypto:', wcOk, '===');
-          } else {
-            console.log('=== DIFF: results MATCH (' + wcOk + ') ===');
-          }
-          callback(null, wcOk);
+      crypto.subtle.importKey('spki', keyBuffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+        .then(function (wcKey) {
+          return crypto.subtle.verify('RSASSA-PKCS1-v1_5', wcKey, signature, data);
         })
-        .catch(function(wcErr) {
-          console.log('=== crypto.verify error (web crypto):', wcErr.message || wcErr, '===');
-          if (jsErr) {
-            console.log('=== DIFF: both failed. pure js:', jsErr, 'web crypto:', wcErr.message || wcErr, '===');
-            callback(new Error('both verifiers failed — pure js: ' + jsErr + ', web crypto: ' + (wcErr.message || wcErr)));
-          } else {
-            console.log('=== DIFF: web crypto failed but pure js returned', jsOk, '===');
-            callback(null, jsOk);
-          }
-        });
+        .then(function (res) {
+          callback(res);
+        })
       return;
     }
 
-    var result = pureJsVerify(algorithm, data, key, signature);
-    console.log('=== crypto.verify result:', result, '===');
-    return result;
+    return pureJsVerify(algorithm, data, key, signature);
   };
   cryptoMod.verify.__patched = true;
 
@@ -1392,22 +969,17 @@ const CRYPTO_VERIFY_PATCH = `
   // =====================================================================
 
   cryptoMod.createVerify = function (algorithm) {
-    console.log('=== crypto.createVerify ===');
-    console.log('algorithm:', algorithm);
     var chunks = [];
 
     return {
       update: function (data, encoding) {
-        console.log('=== Verify.update ===');
         var buf;
         if (typeof data === 'string') {
           if (encoding === 'hex') {
             buf = new Uint8Array(data.length / 2);
             for (var i = 0; i < buf.length; i++) buf[i] = parseInt(data.substr(i * 2, 2), 16);
           } else if (encoding === 'base64') {
-            var bin = atob(data);
-            buf = new Uint8Array(bin.length);
-            for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+            buf = new Uint8Array(Buffer.from(data, 'base64'));
           } else {
             buf = new TextEncoder().encode(data);
           }
@@ -1416,12 +988,10 @@ const CRYPTO_VERIFY_PATCH = `
         } else {
           buf = new Uint8Array(data);
         }
-        console.log('chunk:', hexPreview(buf), '(' + buf.length + ' bytes)');
         chunks.push(buf);
         return this;
       },
       verify: function (key, signature) {
-        console.log('=== Verify.verify ===');
         // Concatenate accumulated chunks
         var totalLen = 0;
         for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
@@ -1431,13 +1001,8 @@ const CRYPTO_VERIFY_PATCH = `
           allData.set(chunks[i], off);
           off += chunks[i].length;
         }
-        console.log('algorithm:', algorithm);
-        console.log('data (accumulated ' + chunks.length + ' chunk(s), ' + totalLen + ' bytes):', hexPreview(allData));
-        console.log('key:', describeKey(key));
-        console.log('signature:', hexPreview(signature));
 
         var result = pureJsVerify(algorithm, allData, key, signature);
-        console.log('=== Verify.verify result:', result, '===');
         return result;
       }
     };
@@ -1458,8 +1023,104 @@ const CRYPTO_VERIFY_PATCH = `
 })();
 `;
 
+// ---------------------------------------------------------------------------
+// zlib polyfill — provides createInflate / createDeflate / createGunzip /
+// createGzip / createInflateRaw / createDeflateRaw streaming stubs.
+// ssh2/lib/protocol/zlib.js calls createInflate()._handle.constructor and
+// uses the resulting ZlibHandle class with init / writeSync / close.
+// No actual compression — data passes through unchanged.
+// ---------------------------------------------------------------------------
+
+const ZLIB_POLYFILL = `
+(function patchZlib() {
+  var zlibMod = require('zlib');
+  if (zlibMod.createInflate && zlibMod.createInflate.__patched) return;
+
+  // ---- constants (add DEFLATE / INFLATE if missing) ----
+  var c = zlibMod.constants || {};
+  if (c.DEFLATE === undefined) c.DEFLATE = 1;
+  if (c.INFLATE === undefined) c.INFLATE = 2;
+
+  // ---- ZlibHandle — mimics Node's internal C++ binding handle ----
+  function ZlibHandle(mode) {
+    this._mode = mode;
+    this._owner = null;
+    this.onerror = null;
+    this._writeState = null;
+  }
+
+  ZlibHandle.prototype.init = function (windowBits, level, memLevel, strategy, writeState, processCallback, dictionary) {
+    this._writeState = writeState;
+  };
+
+  ZlibHandle.prototype.writeSync = function (flush, chunk, inOff, inLen, buffer, outOff, outLen) {
+    // Passthrough: copy as much as fits
+    var toCopy = inLen < outLen ? inLen : outLen;
+    if (toCopy > 0) {
+      for (var i = 0; i < toCopy; i++) {
+        buffer[outOff + i] = chunk[inOff + i];
+      }
+    }
+    // writeState[0] = availOutAfter, writeState[1] = availInAfter
+    this._writeState[0] = outLen - toCopy;
+    this._writeState[1] = inLen - toCopy;
+  };
+
+  ZlibHandle.prototype.close = function () {};
+
+  // ---- stream objects returned by create* ----
+  function ZStream() {
+    this._handle = { constructor: ZlibHandle };
+    this._listeners = {};
+  }
+
+  ZStream.prototype.on = function (event, cb) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].push(cb);
+    return this;
+  };
+
+  ZStream.prototype.write = function (chunk) {
+    var cbs = this._listeners['data'];
+    if (cbs) {
+      var data = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
+      for (var i = 0; i < cbs.length; i++) cbs[i](data);
+    }
+    return true;
+  };
+
+  ZStream.prototype.end = function () {
+    var cbs = this._listeners['end'];
+    if (cbs) for (var i = 0; i < cbs.length; i++) cbs[i]();
+  };
+
+  ZStream.prototype.flush = ZStream.prototype.end;
+
+  function makeStream() { return new ZStream(); }
+  makeStream.__patched = true;
+
+  zlibMod.createInflate = makeStream;
+  zlibMod.createDeflate = makeStream;
+  zlibMod.createInflateRaw = makeStream;
+  zlibMod.createDeflateRaw = makeStream;
+  zlibMod.createGunzip = makeStream;
+  zlibMod.createGzip = makeStream;
+
+  // Patch default export too
+  if (zlibMod.default && typeof zlibMod.default === 'object') {
+    zlibMod.default.createInflate = makeStream;
+    zlibMod.default.createDeflate = makeStream;
+    zlibMod.default.createInflateRaw = makeStream;
+    zlibMod.default.createDeflateRaw = makeStream;
+    zlibMod.default.createGunzip = makeStream;
+    zlibMod.default.createGzip = makeStream;
+  }
+})();
+`;
+
 export function useNodePolyfill(repl: any): void {
   repl.eval(CREATEHASH_POLYFILL);
   repl.eval(ECDH_POLYFILL);
   repl.eval(CRYPTO_VERIFY_PATCH);
+  repl.eval(ZLIB_POLYFILL);
 }

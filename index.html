@@ -19,13 +19,19 @@
     -->
     <script>
       (function() {
-        // --- 1. Keep crypto shim namespace mutable ---
+        // --- 1. Keep crypto & zlib shim namespaces mutable so polyfills can patch them ---
         var _freeze = Object.freeze;
         Object.freeze = function(obj) {
           if (obj && typeof obj.createHash === 'function'
               && typeof obj.randomBytes === 'function'
               && typeof obj.createHmac === 'function'
               && typeof obj.createECDH !== 'function') {
+            return obj;
+          }
+          // zlib shim: has gzip/gunzip/inflate/deflate but not createInflate
+          if (obj && typeof obj.gzip === 'function'
+              && typeof obj.inflate === 'function'
+              && typeof obj.createInflate !== 'function') {
             return obj;
           }
           return _freeze.call(Object, obj);

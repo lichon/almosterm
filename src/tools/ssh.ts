@@ -261,6 +261,26 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
   writeTerm(`ssh: connecting to ${username}@${host}:${port}...\r\n`);
 
   const repl = getContainer().createREPL();
+
+  // Only install ssh2 if it's not already available
+  let ssh2Available = false;
+  try {
+    repl.eval('require("ssh2")');
+    ssh2Available = true;
+  } catch (e) {
+    console.log(e)
+    ssh2Available = false;
+  }
+
+  if (!ssh2Available) {
+    writeTerm('ssh: ssh2 package not found, installing...\r\n');
+    await getContainer().npm.install('ssh2@1.17.0', {
+      onProgress(message) {
+        writeTerm(`npm: ${message}`);
+      },
+    });
+  }
+
   repl.eval(SAFER_BUFFER_POLYFILL);
 
   // ---- Step 1: Open WebSocket to Worker (raw TCP proxy) ----

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "almostnode": "^0.2.14",
+    "crypto-js": "^4.2.0",
     "hono": "^4.12.30",
     "just-bash": "^3.1.0",
     "react": "^19.2.7",
@@ -35,6 +36,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "asn1": "^0.2.6",
     "safer-buffer": "^2.1.2",
+    "ssh2": "^1.17.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vitest": "^4.1.10",
