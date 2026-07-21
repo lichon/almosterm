@@ -73,7 +73,10 @@ const CREATEHASH_POLYFILL = `
     var result = this._hasher.finalize();
     if (encoding === 'hex') return result.toString(C.enc.Hex);
     if (encoding === 'base64') return result.toString(C.enc.Base64);
-    return Buffer.from(result);
+    var hashHex = result.toString(C.enc.Hex)
+    return Buffer.from(new Uint8Array(
+      hashHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+    ));
   };
 
   cryptoMod.createHash = function (algorithm) {
@@ -954,12 +957,16 @@ const CRYPTO_VERIFY_PATCH = `
           return crypto.subtle.verify('RSASSA-PKCS1-v1_5', wcKey, signature, data);
         })
         .then(function (res) {
-          callback(res);
+          callback(null, res);
         })
+        .catch(function (err) {
+          callback(err);
+        });
       return;
     }
 
-    return pureJsVerify(algorithm, data, key, signature);
+    var result = pureJsVerify(algorithm, data, key, signature);
+    return result;
   };
   cryptoMod.verify.__patched = true;
 
@@ -1020,6 +1027,493 @@ const CRYPTO_VERIFY_PATCH = `
     }
   }
 
+})();
+`;
+
+// ---------------------------------------------------------------------------
+// createCipheriv / createDecipheriv polyfill
+//
+// ssh2 uses these for AES-128/256-CTR and AES-128/256-CBC transport
+// encryption. Implemented via crypto-js. Supports AES, DES, TripleDES
+// with CBC, CTR, CFB, OFB, ECB modes. GCM is not available in crypto-js.
+// ---------------------------------------------------------------------------
+
+const CREATECIPHERIV_POLYFILL = `
+(function patchCreateCipheriv() {
+  var cryptoMod = require('crypto');
+  var C = globalThis.__cryptoJS;
+
+  if (cryptoMod.createCipheriv && cryptoMod.createCipheriv.__patched) return;
+
+  // ---- helpers ----
+
+  function toWordArray(data) {
+    if (typeof data === 'string') return C.enc.Utf8.parse(data);
+    if (Buffer.isBuffer(data)) {
+      data = new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+    }
+    if (data instanceof Uint8Array) {
+      var words = [];
+      for (var i = 0; i < data.length; i++) {
+        words[i >>> 2] |= (data[i] & 0xff) << (24 - (i % 4) * 8);
+      }
+      return C.lib.WordArray.create(words, data.length);
+    }
+    if (data && data.buffer instanceof ArrayBuffer) {
+      return toWordArray(new Uint8Array(data.buffer, data.byteOffset || 0, data.length));
+    }
+    return C.lib.WordArray.create([], 0);
+  }
+
+  function wordArrayToBuffer(wa) {
+    if (!wa || wa.sigBytes === 0) return Buffer.alloc(0);
+    var hex = wa.toString(C.enc.Hex);
+    var bytes = new Uint8Array(hex.length / 2);
+    for (var i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return Buffer.from(bytes);
+  }
+
+  function parseData(data, encoding) {
+    if (typeof data === 'string') {
+      if (encoding === 'hex') return C.enc.Hex.parse(data);
+      if (encoding === 'base64') return C.enc.Base64.parse(data);
+      return C.enc.Utf8.parse(data);
+    }
+    return toWordArray(data);
+  }
+
+  function toBytes(data) {
+    if (Buffer.isBuffer(data)) return new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+    if (data instanceof Uint8Array) return data;
+    if (data && data.buffer instanceof ArrayBuffer) return new Uint8Array(data.buffer, data.byteOffset || 0, data.length);
+    if (typeof data === 'string') return new Uint8Array(Buffer.from(data, 'hex'));
+    return new Uint8Array(0);
+  }
+
+  // ---- algorithm parser ----
+
+  var CIPHER_MAP = {
+    aes: 'AES', aes128: 'AES', aes192: 'AES', aes256: 'AES',
+    des: 'DES', tripledes: 'TripleDES', '3des': 'TripleDES', desede: 'TripleDES'
+  };
+
+  function parseAlgorithm(algo) {
+    var lower = algo.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var cipherName = null;
+    for (var prefix in CIPHER_MAP) {
+      if (lower.indexOf(prefix) === 0) { cipherName = CIPHER_MAP[prefix]; break; }
+    }
+    if (!cipherName) cipherName = 'AES';
+
+    var modeName = 'CBC', isGCM = false;
+    if (lower.indexOf('gcm') >= 0) { modeName = 'CTR'; isGCM = true; }
+    else if (lower.indexOf('ctr') >= 0) modeName = 'CTR';
+    else if (lower.indexOf('cbc') >= 0) modeName = 'CBC';
+    else if (lower.indexOf('ecb') >= 0) modeName = 'ECB';
+    else if (lower.indexOf('cfb') >= 0) modeName = 'CFB';
+    else if (lower.indexOf('ofb') >= 0) modeName = 'OFB';
+
+    var algoClass = C.algo[cipherName];
+    if (!algoClass) throw new Error('Unsupported cipher: ' + cipherName);
+    var modeObj = C.mode[modeName];
+    if (!modeObj) throw new Error('Unsupported mode: ' + modeName);
+
+    var noPad = modeName === 'CTR' || modeName === 'OFB' || modeName === 'CFB';
+    return {
+      algo: algoClass, mode: modeObj, isGCM: isGCM,
+      defaultPadding: noPad ? C.pad.NoPadding : C.pad.Pkcs7
+    };
+  }
+
+  // ===================================================================
+  // AES-GCM (pure JS, built on crypto-js AES)
+  // ===================================================================
+
+  function aesEncryptBlock(keyWA, block) {
+    // Encrypt exactly one 16-byte block with AES (ECB / no padding).
+    // We merge both process() and finalize() because different crypto-js
+    // versions / build variants may return the encrypted block from either.
+    var enc = C.algo.AES.createEncryptor(keyWA, { mode: C.mode.ECB, padding: C.pad.NoPadding });
+    var r1 = enc.process(block);
+    var r2 = enc.finalize();
+
+    var words = [];
+    var sigBytes = 0;
+    if (r1 && r1.words && r1.words.length > 0) {
+      words = words.concat(r1.words);
+      sigBytes += (r1.sigBytes > 0 ? r1.sigBytes : r1.words.length * 4);
+    }
+    if (r2 && r2.words && r2.words.length > 0) {
+      words = words.concat(r2.words);
+      sigBytes += (r2.sigBytes > 0 ? r2.sigBytes : r2.words.length * 4);
+    }
+    if (words.length > 0) {
+      return C.lib.WordArray.create(words, sigBytes);
+    }
+
+    // Debug: if we got here, Log the failure details
+    console.log('[aesEncryptBlock] WARNING: empty result. r1:', JSON.stringify(r1 && { wlen: r1.words ? r1.words.length : 0, sb: r1.sigBytes }));
+    console.log('[aesEncryptBlock] r2:', JSON.stringify(r2 && { wlen: r2.words ? r2.words.length : 0, sb: r2.sigBytes }));
+
+    return C.lib.WordArray.create([], 0);
+  }
+
+  // inc32: increment the rightmost 32 bits of a 16-byte counter (big-endian)
+  function inc32(counter) {
+    var out = new Uint8Array(counter);
+    for (var i = 15; i >= 12; i--) {
+      out[i] = (out[i] + 1) & 0xff;
+      if (out[i] !== 0) break;
+    }
+    return out;
+  }
+
+  // GF(2^128) multiplication. X, Y are 16-byte Uint8Arrays (big-endian).
+  // R = 0xE1 << 120  (reduction polynomial)
+  function gfMul(x, y) {
+    // Make copies as we mutate
+    var z = new Uint8Array(16);
+    var v = new Uint8Array(y);
+
+    for (var i = 0; i < 128; i++) {
+      var byteIdx = i >>> 3;
+      var bitIdx = 7 - (i & 7);
+      if ((x[byteIdx] >>> bitIdx) & 1) {
+        for (var j = 0; j < 16; j++) z[j] ^= v[j];
+      }
+      var lsb = v[15] & 1;
+      for (var j = 15; j > 0; j--) {
+        v[j] = (v[j] >>> 1) | ((v[j - 1] & 1) << 7);
+      }
+      v[0] >>>= 1;
+      if (lsb) v[0] ^= 0xE1;
+    }
+    return z;
+  }
+
+  // GHASH: H is 16-byte Uint8Array (hash subkey), A is AAD bytes, C is ciphertext bytes
+  function ghash(H, A, C) {
+    // Concatenate: A || pad(A) || C || pad(C) || len(A)*8 || len(C)*8
+    function pad16(arr) {
+      var rem = arr.length % 16;
+      if (rem === 0) return arr;
+      var padded = new Uint8Array(arr.length + (16 - rem));
+      padded.set(arr, 0);
+      return padded;
+    }
+    function len64(n) {
+      // 64-bit big-endian, n is length in bits
+      var out = new Uint8Array(8);
+      // Since JS numbers are 53-bit, the upper 32 bits will be 0 for realistic lengths
+      var hi = Math.floor(n / 0x100000000);
+      var lo = n >>> 0;
+      out[0] = (hi >>> 24) & 0xff;
+      out[1] = (hi >>> 16) & 0xff;
+      out[2] = (hi >>> 8) & 0xff;
+      out[3] = hi & 0xff;
+      out[4] = (lo >>> 24) & 0xff;
+      out[5] = (lo >>> 16) & 0xff;
+      out[6] = (lo >>> 8) & 0xff;
+      out[7] = lo & 0xff;
+      return out;
+    }
+
+    var X = new Uint8Array(pad16(A).length + pad16(C).length + 16);
+    var off = 0;
+    var aPad = pad16(A); X.set(aPad, off); off += aPad.length;
+    var cPad = pad16(C); X.set(cPad, off); off += cPad.length;
+    X.set(len64(A.length * 8), off); off += 8;
+    X.set(len64(C.length * 8), off);
+
+    // Process 16-byte blocks
+    var Y = new Uint8Array(16);
+    for (var i = 0; i < X.length; i += 16) {
+      var block = X.slice(i, i + 16);
+      for (var j = 0; j < 16; j++) Y[j] ^= block[j];
+      Y = gfMul(Y, H);
+    }
+    return Y;
+  }
+
+  // Manual AES-CTR: encrypt counter blocks with aesEncryptBlock, XOR with data.
+  // Avoids crypto-js CTR streaming issues (signed-32 counter, endianness).
+  function aesCtrXor(keyWA, initialCounter, data) {
+    var out = new Uint8Array(data.length);
+    var ctr = new Uint8Array(initialCounter);
+
+    for (var offset = 0; offset < data.length; offset += 16) {
+      var ctrWA = toWordArray(ctr);
+      var ks = wordArrayToBuffer(aesEncryptBlock(keyWA, ctrWA));
+      var chunk = Math.min(16, data.length - offset);
+      for (var i = 0; i < chunk; i++) {
+        out[offset + i] = data[offset + i] ^ ks[i];
+      }
+      ctr = inc32(ctr);
+    }
+    return Buffer.from(out);
+  }
+
+  // GCM encrypt one-shot
+  function gcmEncrypt(keyWA, iv, plaintext, aad, tagLen) {
+    if (!tagLen) tagLen = 16;
+    var ivBytes = toBytes(iv);
+    var plainBytes = toBytes(plaintext);
+
+    // J0: if IV is 12 bytes, J0 = IV || 0^31 || 1
+    var j0;
+    if (ivBytes.length === 12) {
+      j0 = new Uint8Array(16);
+      j0.set(ivBytes, 0);
+      j0[15] = 1;
+    } else {
+      var Htmp = wordArrayToBuffer(aesEncryptBlock(keyWA, C.lib.WordArray.create([0,0,0,0], 16)));
+      j0 = ghash(Htmp, new Uint8Array(0), ivBytes);
+    }
+
+    // H = E_K(0^128)
+    var H = wordArrayToBuffer(aesEncryptBlock(keyWA, C.lib.WordArray.create([0,0,0,0], 16)));
+
+    // C = AES-CTR(K, J0+1, P)
+    var ciphertext = aesCtrXor(keyWA, inc32(j0), plainBytes);
+
+    // GHASH(H, AAD, C)
+    var S = ghash(H, toBytes(aad), ciphertext);
+
+    // Tag = MSB_t( E_K(J0) XOR S )
+    var ej0 = wordArrayToBuffer(aesEncryptBlock(keyWA, toWordArray(j0)));
+    var tag = new Uint8Array(tagLen);
+    for (var i = 0; i < tagLen; i++) tag[i] = ej0[i] ^ S[i];
+
+    return { ciphertext: ciphertext, tag: Buffer.from(tag) };
+  }
+
+  // GCM decrypt one-shot
+  function gcmDecrypt(keyWA, iv, ciphertext, aad, tagLen) {
+    if (!tagLen) tagLen = 16;
+    var ivBytes = toBytes(iv);
+    var ctBytes = toBytes(ciphertext);
+    var aadBytes = toBytes(aad);
+
+    // Separate ciphertext and tag: last tagLen bytes are tag
+    if (ctBytes.length < tagLen) throw new Error('Ciphertext too short for tag');
+    var actualCt = ctBytes.slice(0, ctBytes.length - tagLen);
+    var providedTag = ctBytes.slice(ctBytes.length - tagLen);
+
+    // J0
+    var j0;
+    if (ivBytes.length === 12) {
+      j0 = new Uint8Array(16);
+      j0.set(ivBytes, 0);
+      j0[15] = 1;
+    } else {
+      var Htmp = wordArrayToBuffer(aesEncryptBlock(keyWA, C.lib.WordArray.create([0,0,0,0], 16)));
+      j0 = ghash(Htmp, new Uint8Array(0), ivBytes);
+    }
+
+    // H = E_K(0^128)
+    var H = wordArrayToBuffer(aesEncryptBlock(keyWA, C.lib.WordArray.create([0,0,0,0], 16)));
+
+    // Verify tag: T' = MSB_t( E_K(J0) XOR GHASH(H, AAD, C) )
+    var S = ghash(H, aadBytes, actualCt);
+    var ej0 = wordArrayToBuffer(aesEncryptBlock(keyWA, toWordArray(j0)));
+    var expectedTag = new Uint8Array(tagLen);
+    for (var i = 0; i < tagLen; i++) expectedTag[i] = ej0[i] ^ S[i];
+
+    var mismatch = 0;
+    for (var i = 0; i < tagLen; i++) mismatch |= providedTag[i] ^ expectedTag[i];
+    if (mismatch !== 0) throw new Error('GCM authentication failed');
+
+    // P = AES-CTR(K, J0+1, C)
+    var plaintext = aesCtrXor(keyWA, inc32(j0), actualCt);
+
+    return plaintext;
+  }
+
+  // ---- GCM streaming Cipher / Decipher ----
+  //
+  // We buffer all input and defer to the one-shot gcmEncrypt / gcmDecrypt
+  // in final().  update() returns empty buffers — callers must concatenate
+  // update() + final() results, which is the standard Node.js GCM pattern.
+
+  function makeGCMCipheriv(isDecrypt, algorithm, key, iv, options) {
+    var keyWA = toWordArray(key);
+    var ivBytes = toBytes(iv);
+    var tagLen = (options && options.authTagLength) || 16;
+
+    var aadChunks = [];
+    var dataChunks = [];
+    var _authTag = null;
+    var _finalized = false;
+    var _output = null;      // result produced by final()
+    var _autoPadding = false;
+
+    return {
+      setAAD: function (aad, opts) {
+        if (opts && opts.plaintextLength !== undefined) { /* hint — ignored */ }
+        var buf = aad;
+        if (!(buf instanceof Uint8Array)) buf = toBytes(buf);
+        if (buf.length > 0) aadChunks.push(buf);
+        return this;
+      },
+      setAuthTag: function (tag) {
+        _authTag = toBytes(tag);
+        return this;
+      },
+      update: function (data, inputEncoding, outputEncoding) {
+        if (_finalized) throw new Error('Cipher already finalized');
+        var buf;
+        if (typeof data === 'string') {
+          if (inputEncoding === 'hex') buf = Buffer.from(data, 'hex');
+          else if (inputEncoding === 'base64') buf = Buffer.from(data, 'base64');
+          else buf = Buffer.from(data, 'utf8');
+        } else {
+          buf = Buffer.from(data);
+        }
+        if (buf.length > 0) dataChunks.push(buf);
+        return Buffer.alloc(0);
+      },
+      final: function (outputEncoding) {
+        if (_finalized) throw new Error('Cipher already finalized');
+        _finalized = true;
+
+        // Concatenate all data chunks
+        var totalData = 0;
+        for (var i = 0; i < dataChunks.length; i++) totalData += dataChunks[i].length;
+        var allData = new Uint8Array(totalData);
+        var off = 0;
+        for (var i = 0; i < dataChunks.length; i++) {
+          allData.set(new Uint8Array(dataChunks[i].buffer, dataChunks[i].byteOffset || 0, dataChunks[i].length), off);
+          off += dataChunks[i].length;
+        }
+
+        // Concatenate AAD
+        var totalAad = 0;
+        for (var i = 0; i < aadChunks.length; i++) totalAad += aadChunks[i].length;
+        var allAad = new Uint8Array(totalAad);
+        off = 0;
+        for (var i = 0; i < aadChunks.length; i++) {
+          allAad.set(aadChunks[i], off);
+          off += aadChunks[i].length;
+        }
+
+        if (isDecrypt) {
+          // Decrypt: input is ciphertext || authTag
+          if (!_authTag) throw new Error('setAuthTag must be called before final for GCM decrypt');
+          var ctWithTag = new Uint8Array(allData.length + _authTag.length);
+          ctWithTag.set(allData, 0);
+          ctWithTag.set(_authTag, allData.length);
+          _output = gcmDecrypt(keyWA, ivBytes, ctWithTag, allAad, tagLen);
+        } else {
+          var result = gcmEncrypt(keyWA, ivBytes, allData, allAad, tagLen);
+          _output = result.ciphertext;
+          _authTag = result.tag;
+        }
+
+        if (outputEncoding) {
+          if (outputEncoding === 'hex') return _output.toString('hex');
+          if (outputEncoding === 'base64') return _output.toString('base64');
+          if (outputEncoding === 'latin1' || outputEncoding === 'binary') return _output.toString('latin1');
+        }
+        return _output;
+      },
+      getAuthTag: function () {
+        if (!_authTag) throw new Error('Auth tag not available yet');
+        return _authTag;
+      },
+      setAutoPadding: function (ap) {
+        _autoPadding = !!ap;
+        return this;
+      }
+    };
+  }
+
+  // ---- create Cipher / Decipher (non-GCM) ----
+
+  function makeCipheriv(isDecrypt, algorithm, key, iv, options) {
+    var parsed = parseAlgorithm(algorithm);
+    var keyWA = toWordArray(key);
+    var ivWA = iv ? toWordArray(iv) : null;
+
+    var autoPad = true;
+    if (options && typeof options === 'object' && options.padding !== undefined) {
+      autoPad = !!options.padding;
+    }
+
+    var padding = autoPad ? parsed.defaultPadding : C.pad.NoPadding;
+
+    var cfg = { mode: parsed.mode, padding: padding };
+    if (ivWA) cfg.iv = ivWA;
+
+    var cryptor;
+    if (isDecrypt) {
+      cryptor = parsed.algo.createDecryptor(keyWA, cfg);
+    } else {
+      cryptor = parsed.algo.createEncryptor(keyWA, cfg);
+    }
+
+    var _autoPadding = autoPad;
+
+    return {
+      update: function (data, inputEncoding, outputEncoding) {
+        var raw = parseData(data, inputEncoding);
+        var result = cryptor.process(raw);
+        var out = wordArrayToBuffer(result);
+        if (outputEncoding) {
+          if (outputEncoding === 'hex') return out.toString('hex');
+          if (outputEncoding === 'base64') return out.toString('base64');
+          if (outputEncoding === 'latin1' || outputEncoding === 'binary') return out.toString('latin1');
+        }
+        return out;
+      },
+      final: function (outputEncoding) {
+        var result = cryptor.finalize();
+        var out = wordArrayToBuffer(result);
+        if (outputEncoding) {
+          if (outputEncoding === 'hex') return out.toString('hex');
+          if (outputEncoding === 'base64') return out.toString('base64');
+          if (outputEncoding === 'latin1' || outputEncoding === 'binary') return out.toString('latin1');
+        }
+        return out;
+      },
+      setAutoPadding: function (ap) {
+        _autoPadding = !!ap;
+        return this;
+      },
+      setAAD: function () {
+        throw new Error('setAAD only supported for GCM mode');
+      },
+      getAuthTag: function () {
+        throw new Error('getAuthTag only supported for GCM mode');
+      }
+    };
+  }
+
+  // ---- attach to crypto module ----
+
+  cryptoMod.createCipheriv = function (algorithm, key, iv, options) {
+    var lower = String(algorithm).toLowerCase();
+    if (lower.indexOf('gcm') >= 0) {
+      return makeGCMCipheriv(false, algorithm, key, iv, options);
+    }
+    return makeCipheriv(false, algorithm, key, iv, options);
+  };
+  cryptoMod.createCipheriv.__patched = true;
+
+  cryptoMod.createDecipheriv = function (algorithm, key, iv, options) {
+    var lower = String(algorithm).toLowerCase();
+    if (lower.indexOf('gcm') >= 0) {
+      return makeGCMCipheriv(true, algorithm, key, iv, options);
+    }
+    return makeCipheriv(true, algorithm, key, iv, options);
+  };
+  cryptoMod.createDecipheriv.__patched = true;
+
+  if (cryptoMod.default && typeof cryptoMod.default === 'object') {
+    cryptoMod.default.createCipheriv = cryptoMod.createCipheriv;
+    cryptoMod.default.createDecipheriv = cryptoMod.createDecipheriv;
+  }
 })();
 `;
 
@@ -1121,6 +1615,7 @@ const ZLIB_POLYFILL = `
 export function useNodePolyfill(repl: any): void {
   repl.eval(CREATEHASH_POLYFILL);
   repl.eval(ECDH_POLYFILL);
+  repl.eval(CREATECIPHERIV_POLYFILL);
   repl.eval(CRYPTO_VERIFY_PATCH);
   repl.eval(ZLIB_POLYFILL);
 }
