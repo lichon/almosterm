@@ -354,8 +354,12 @@ export const ssh = defineCommand('ssh', async (args, _ctx) => {
     }
 
     // Register the stream so Terminal.tsx forwards keystrokes to it.
-    // Terminal.onData checks window.__almosterm_ssh_stream at the top
-    // of its handler; when set, all keystrokes go directly to SSH.
+    // Bypass the polyfilled Writable.write (known to silently drop data)
+    // by calling Channel._write directly.
+    const origWrite = (stream as any)._write.bind(stream);
+    (stream as any).write = (chunk: any, encoding?: any, cb?: any) =>
+      origWrite(chunk, encoding, cb || (() => {}));
+
     setSshStream(stream);
     const term = getTerminal()
 
