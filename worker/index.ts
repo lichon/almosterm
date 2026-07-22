@@ -34,15 +34,21 @@ app.all('/api/curl', async (c) => {
     return c.json({ error: 'missing "url" query parameter' }, 400);
   }
 
-  try { new URL(targetUrl); } catch {
+  // Default to https:// if no protocol is present
+  const urlWithProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(targetUrl)
+    ? targetUrl
+    : `https://${targetUrl}`;
+
+  try { new URL(urlWithProto); } catch {
     return c.json({ error: 'invalid URL' }, 400);
   }
 
   const upstreamHeaders = new Headers(c.req.raw.headers);
   upstreamHeaders.delete('host');
   upstreamHeaders.set('accept-encoding', 'gzip');
+  upstreamHeaders.set('user-agent', 'curl/8.13.0');
 
-  const upstream = await fetch(targetUrl, {
+  const upstream = await fetch(urlWithProto, {
     method: c.req.method,
     headers: upstreamHeaders,
     body: c.req.method !== 'GET' && c.req.method !== 'HEAD'
