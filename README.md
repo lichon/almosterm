@@ -1,6 +1,6 @@
 # almosterm
 
-Browser-based terminal emulator with a virtual file system, Node.js runtime, and SSH client — powered by [almostnode](https://github.com/lichon/almostnode).
+Browser-based terminal emulator with a virtual file system, Node.js runtime, and SSH client — inspired by almostnode.
 
 ![version](https://img.shields.io/badge/version-0.2.0-blue)
 
