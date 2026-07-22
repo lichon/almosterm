@@ -17,6 +17,16 @@ const App: React.FC = () => {
   const [importOpen, setImportOpen] = useState(false);
   const { open: editOpen, filePath: editPath, openEditor, closeEditor } = useEditorStore();
 
+  // Warn before closing the tab — protects against accidental Ctrl+W
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
+
   const handleExport = useCallback(() => {
     const vfs = getVfs();
     const files: Record<string, any> = {};
