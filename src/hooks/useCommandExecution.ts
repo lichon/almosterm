@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import { useVfsStore } from '../store/vfsStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useJustBash } from './useJustBash';
-import { persistVfs, getVfs } from '../fs/configure';
 import { getTabCompletions } from './useTabCompletion';
 import { getTerminal, writeTerm } from '../utils';
 
@@ -33,16 +32,6 @@ export function useCommandExecution() {
       return;
     }
 
-    // Listen for VFS mutations from any source (adapter, container, node, etc.)
-    let vfsChanged = false;
-    const onVfsChange = (path: string) => {
-      if (path.startsWith('/tmp')) return
-      vfsChanged = true;
-    };
-    const vfs = getVfs();
-    vfs.on('change', onVfsChange);
-    vfs.on('delete', onVfsChange);
-
     try {
       const currentCwd = useVfsStore.getState().cwd;
       const result = await exec(trimmed, {
@@ -54,16 +43,10 @@ export function useCommandExecution() {
       if (result.stdout) writeTerm(result.stdout);
       if (result.stderr) writeTerm(result.stderr, 'stderr');
 
-      // Sync CWD and persist VFS only when mutated and auto-save is enabled
+      // Sync CWD
       useVfsStore.getState().setCwd(result.env['PWD'] || '/');
-      if (vfsChanged && useVfsStore.getState().autoSave) {
-        setTimeout(() => persistVfs(vfs));
-      }
     } catch (err: any) {
       writeTerm(`Error: ${err.message}\n`, 'stderr');
-    } finally {
-      vfs.off('change', onVfsChange);
-      vfs.off('delete', onVfsChange);
     }
 
     // Redraw prompt for next input (buffer already cleared by handleKey)

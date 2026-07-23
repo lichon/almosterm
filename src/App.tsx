@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useVfsStore } from './store/vfsStore';
 import { useToolStore } from './store/toolStore';
-import { getVfs, populateDefaultVfs, loadPersistedVfs } from './fs/configure';
+import { getVfs, initZenVfs } from './fs/configure';
 import Bash from './bash';
 import { StatusBar } from './components/StatusBar';
 import { ImportDialog } from './components/ImportDialog';
@@ -80,12 +80,8 @@ const App: React.FC = () => {
           // No Worker — keep default npm registry
         }
 
-        const vfs = getVfs();
-        const hasData = loadPersistedVfs(vfs);
-
-        if (!hasData) {
-          populateDefaultVfs(vfs);
-        }
+        // Initialize ZenVFS (async — wait for it before marking ready)
+        await initZenVfs();
 
         setVfsReady(true);
       } catch (err: any) {
