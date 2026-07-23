@@ -54,9 +54,9 @@ export function useCommandExecution() {
       if (result.stdout) writeTerm(result.stdout);
       if (result.stderr) writeTerm(result.stderr, 'stderr');
 
-      // Sync CWD and persist VFS only when mutated
+      // Sync CWD and persist VFS only when mutated and auto-save is enabled
       useVfsStore.getState().setCwd(result.env['PWD'] || '/');
-      if (vfsChanged) {
+      if (vfsChanged && useVfsStore.getState().autoSave) {
         setTimeout(() => persistVfs(vfs));
       }
     } catch (err: any) {

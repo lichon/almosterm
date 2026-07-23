@@ -13,6 +13,7 @@ import { npx } from '../tools/npx';
 import { curl } from '../tools/curl';
 import { ssh } from '../tools/ssh';
 import { edit } from '../tools/edit';
+import { autosave } from '../tools/autosave';
 
 // ---------------------------------------------------------------------------
 // VfsToJustBashAdapter — bridges almostnode's sync VirtualFS to just-bash's
@@ -197,7 +198,7 @@ export function useJustBash(options?: {
     _bashInstance = new Bash({
       files: options?.files,
       fs: options?.fs ?? _vfsAdapter,
-      customCommands: [cmdv, node, npm, reload, npm_test, npx, curl, ssh, edit, ...(options?.customCommands ?? [])],
+      customCommands: [cmdv, node, npm, reload, npm_test, npx, curl, ssh, edit, autosave, ...(options?.customCommands ?? [])],
       env: options?.env ?? { HOME: '/home/user' },
       cwd: options?.cwd,
     });
