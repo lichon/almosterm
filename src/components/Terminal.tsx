@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import 'xterm/css/xterm.css';
 import { getSshStream, setTerminal } from '../utils';
 import { useHotKeys } from '../hooks/useHotKeys';
@@ -79,9 +80,11 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
 
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
+    const clipboardAddon = new ClipboardAddon();
 
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
+    term.loadAddon(clipboardAddon);
     term.open(terminalRef.current);
     term.focus();
 
@@ -93,6 +96,16 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // ---- Copy on select: automatically copy selected text to clipboard ----
+    term.onSelectionChange(() => {
+      const selectedText = term.getSelection();
+      if (selectedText) {
+        navigator.clipboard.writeText(selectedText).catch(() => {
+          // Clipboard API may be denied in insecure contexts; silently ignore
+        });
+      }
+    });
 
     // Handle terminal input
     term.onData((data) => {
