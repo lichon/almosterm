@@ -86,12 +86,13 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
     term.loadAddon(webLinksAddon);
     term.loadAddon(clipboardAddon);
     term.open(terminalRef.current);
-    term.focus();
 
     // Defer the initial fit to ensure the browser has completed layout,
     // avoiding a race where the renderer's dimensions aren't yet available.
     requestAnimationFrame(() => {
       try { fitAddon.fit(); } catch { /* renderer not ready */ }
+      // Auto-focus after layout is settled, otherwise focus() may silently fail
+      try { term.focus(); } catch { /* disposed */ }
     });
 
     xtermRef.current = term;
@@ -170,6 +171,18 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
     container.addEventListener('dragleave', onDragLeave);
     container.addEventListener('drop', onDrop);
 
+    // Click anywhere on the terminal container to re-focus xterm
+    const onClickFocus = () => {
+      try { xtermRef.current?.focus(); } catch { /* disposed */ }
+    };
+    container.addEventListener('click', onClickFocus);
+
+    // Auto-focus when the window/tab regains focus
+    const onWindowFocus = () => {
+      try { xtermRef.current?.focus(); } catch { /* disposed */ }
+    };
+    window.addEventListener('focus', onWindowFocus);
+
     // Resize handling — guarded against disposed terminal and wrapped in
     // try/catch to handle races where xterm's internal renderer has been
     // torn down (e.g. React StrictMode double-mount or fast unmount).
@@ -183,6 +196,8 @@ export const Terminal: React.FC<TerminalComponentProps> = ({ onInput, onSignal, 
 
     return () => {
       resizeObserver.disconnect();
+      container.removeEventListener('click', onClickFocus);
+      window.removeEventListener('focus', onWindowFocus);
       container.removeEventListener('dragover', onDragOver);
       container.removeEventListener('dragenter', onDragEnter);
       container.removeEventListener('dragleave', onDragLeave);
