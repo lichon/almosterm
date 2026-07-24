@@ -19,11 +19,11 @@ export const node = defineCommand('node', async (args, ctx) => {
   try {
     const result = await container.run(`node ${args.join(' ')}`, {
       cwd: ctx.cwd,
-      onStdout: (data) => {
+      onStdout: (data: string) => {
         streamedStdout += data;
         writeTerm(data);
       },
-      onStderr: (data) => {
+      onStderr: (data: string) => {
         streamedStderr += data;
         writeTerm(data, 'stderr');
       },

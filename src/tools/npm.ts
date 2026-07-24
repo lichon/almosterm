@@ -138,11 +138,11 @@ export const npm = defineCommand('npm', async (args, ctx) => {
         `${scriptCmd} ${scriptArgs.join(' ')}`,
         {
           cwd: ctx.cwd,
-          onStdout: (data) => {
+          onStdout: (data: string) => {
             streamedStdout += data;
             writeTerm(data);
           },
-          onStderr: (data) => {
+          onStderr: (data: string) => {
             streamedStderr += data;
             writeTerm(data, 'stderr');
           },

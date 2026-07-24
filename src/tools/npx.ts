@@ -70,11 +70,11 @@ async function runScript(
     `node ${scriptPath} ${args.join(' ')}`,
     {
       cwd,
-      onStdout: (data) => {
+      onStdout: (data: string) => {
         streamedStdout += data;
         writeTerm(data);
       },
-      onStderr: (data) => {
+      onStderr: (data: string) => {
         streamedStderr += data;
         writeTerm(data, 'stderr');
       },
