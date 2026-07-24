@@ -1,36 +1,41 @@
 import { VirtualFS } from 'almostnode';
-import { createContainer, ZenVFS } from './zen-vfs';
+import { configureZenFS, createContainer, ZenVFS } from './zen-vfs';
 import type { ContainerConfig, ZenContainer } from './zen-vfs';
 
-// Container is null until async init completes.
-let _container: ZenContainer | null = null;
+// ─── globalThis keys (survive Vite HMR module reloads) ───────────────────
 
-/** Initialize the ZenVFS-powered container. Call once at app startup. */
-export async function initZenVfs(): Promise<ZenContainer> {
-  if (_container) return _container;
+const CONTAINER_KEY = '__zenContainer';
 
-  _container = await createContainer({
+declare global {
+  var __zenContainer: ZenContainer | undefined;
+}
+
+/** One-shot init: configure backends, create container, seed default files.
+ *  Returns the cached container on subsequent calls (HMR-safe). */
+export async function initZenContainer(): Promise<ZenContainer> {
+  if (globalThis[CONTAINER_KEY]) return globalThis[CONTAINER_KEY];
+
+  const vfs = await configureZenFS({
     mounts: {
       '/tmp': { backend: 'memory' },
       '/': { backend: 'indexeddb', options: { storeName: 'rootfs' } },
     },
     strict: false,
   });
+  const container = createContainer(vfs);
+  populateDefaultVfs(vfs);
+  globalThis[CONTAINER_KEY] = container;
+  return container;
+}
 
-  populateDefaultVfs(_container.vfs);
-  return _container;
+/** Get the container. Throws if init hasn't completed. */
+export function getContainer(): ZenContainer {
+  return globalThis[CONTAINER_KEY]!;
 }
 
 /** Get the VFS. Throws if init hasn't completed. */
 export function getVfs(): VirtualFS {
-  if (!_container) throw new Error('ZenVFS not initialized. Call initZenVfs() first.');
-  return _container.vfs;
-}
-
-/** Get the full container. Throws if init hasn't completed. */
-export function getContainer(): any {
-  if (!_container) throw new Error('ZenVFS not initialized. Call initZenVfs() first.');
-  return _container;
+  return getContainer()!.vfs;
 }
 
 /** Initialize the VFS with a default Unix-like structure. */

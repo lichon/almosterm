@@ -1,8 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useVfsStore } from './store/vfsStore';
-import { useToolStore } from './store/toolStore';
-import { getVfs, initZenVfs } from './fs/configure';
-import Bash from './bash';
+import { getVfs, initZenContainer } from './fs/configure';
 import { StatusBar } from './components/StatusBar';
 import { ImportDialog } from './components/ImportDialog';
 import { EditDialog } from './components/EditDialog';
@@ -11,10 +9,10 @@ import './styles/terminal.css';
 
 const App: React.FC = () => {
   const { setVfsReady, vfsReady } = useVfsStore();
-  const loadTools = useToolStore((s) => s.loadFromStorage);
   const [initError, setInitError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
+  const [BashComponent, setBashComponent] = useState<React.ComponentType | null>(null);
   const { open: editOpen, filePath: editPath, openEditor, closeEditor } = useEditorStore();
 
   // Warn before closing the tab — protects against accidental Ctrl+W
@@ -66,8 +64,6 @@ const App: React.FC = () => {
   useEffect(() => {
     async function init() {
       try {
-        loadTools();
-
         // Detect Worker proxy capabilities. If /api/status resolves,
         // route npm through the proxy; otherwise keep direct registry.
         try {
@@ -80,9 +76,12 @@ const App: React.FC = () => {
           // No Worker — keep default npm registry
         }
 
-        // Initialize ZenVFS (async — wait for it before marking ready)
-        await initZenVfs();
+        // Initialize ZenVFS and container (async — wait for it before marking ready)
+        await initZenContainer();
 
+        // after vfs ready
+        const bash = await import('./bash');
+        setBashComponent(() => bash.default);
         setVfsReady(true);
       } catch (err: any) {
         console.error('Init error:', err);
@@ -100,7 +99,9 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      <div className="terminal-wrapper"><Bash /></div>
+      <div className="terminal-wrapper">
+        {BashComponent ? <BashComponent /> : <span>Loading shell...</span>}
+      </div>
       <StatusBar
         onImport={() => setImportOpen(true)}
         onExport={handleExport}

@@ -5,9 +5,8 @@
  * all filesystem operations through @zenfs/core backends. Mount points
  * map path prefixes to specific storage backends:
  *   - /tmp  → InMemory  (@zenfs/core) - ephemeral, fast
- *   - /node_modules → IndexedDB (@zenfs/dom) - persistent
+ *   - /     → IndexedDB (@zenfs/dom) - persistent
  *
- * Paths not matching any mount throw ENOSYS.
  */
 import { configure, InMemory, fs as zenfs } from '@zenfs/core';
 import { IndexedDB } from '@zenfs/dom';
@@ -37,40 +36,6 @@ export interface ContainerConfig {
   mounts: Record<string, MountConfig>;
   strict?: boolean;
   containerOptions?: ContainerOptions;
-}
-
-// ─── Error Definitions ──────────────────────────────────────────────────────
-
-export const ERROR_CODES = {
-  NOT_FOUND: 'ENOENT',
-  NOT_DIR: 'ENOTDIR',
-  IS_DIR: 'EISDIR',
-  EXISTS: 'EEXIST',
-  NOT_EMPTY: 'ENOTEMPTY',
-  NOT_SUPPORTED: 'ENOSYS',
-  NO_SPACE: 'ENOSPC',
-  NO_DEVICE: 'ENODEV',
-} as const;
-
-export interface VfsError extends Error {
-  code: string;
-  errno: number;
-  syscall: string;
-  path?: string;
-}
-
-export function createVfsError(
-  code: string,
-  syscall: string,
-  path?: string,
-  message?: string,
-): VfsError {
-  const err = new Error(message || `${code}: ${syscall} ${path || ''}`) as VfsError;
-  err.code = code;
-  err.errno = -1;
-  err.syscall = syscall;
-  if (path !== undefined) err.path = path;
-  return err;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -124,10 +89,10 @@ export function validateConfig(config: ContainerConfig): Map<string, MountConfig
  * but all operations route through configured zenfs backends.
  */
 export class ZenVFS extends VirtualFS {
-  private _mounts: Map<string, MountConfig>;
+  private _mounts: Record<string, MountConfig>;
   private _decoder = new TextDecoder();
 
-  constructor(mounts: Map<string, MountConfig>) {
+  constructor(mounts: Record<string, MountConfig>) {
     super();
     this._mounts = mounts;
   }
@@ -212,29 +177,6 @@ export class ZenVFS extends VirtualFS {
     zenfs.renameSync(oldPath, newPath);
   }
 
-  realpathSync(path: string): string {
-    // Normalize: resolve . and ..
-    const segments = path.split('/').filter(Boolean);
-    const resolved: string[] = [];
-    for (const seg of segments) {
-      if (seg === '.') continue;
-      if (seg === '..') { resolved.pop(); continue; }
-      resolved.push(seg);
-    }
-    return '/' + resolved.join('/');
-  }
-
-  accessSync(path: string, _mode?: number): void {
-    if (!this.existsSync(path)) {
-      throw createVfsError(ERROR_CODES.NOT_FOUND, 'access', path);
-    }
-  }
-
-  copyFileSync(src: string, dest: string): void {
-    const data = this.readFileSync(src);
-    this.writeFileSync(dest, data);
-  }
-
   // ── Snapshot (for persistence/export) ─────────────────────────────────
 
   toSnapshot(): { version: number; files: { path: string; type: 'file' | 'directory'; content?: string; size?: number }[] } {
@@ -258,7 +200,7 @@ export class ZenVFS extends VirtualFS {
     };
 
     // Start from each mount root
-    for (const mountPath of this._mounts.keys()) {
+    for (const mountPath of Object.keys(this._mounts)) {
       if (this.existsSync(mountPath)) {
         files.push({ path: mountPath, type: 'directory' });
         collect(mountPath);
@@ -271,7 +213,7 @@ export class ZenVFS extends VirtualFS {
 // ─── Container type ─────────────────────────────────────────────────────────
 
 export type ZenContainer = {
-  vfs: ZenVFS;
+  vfs: VirtualFS;
   runtime: Awaited<ReturnType<typeof import('almostnode').createContainer>>['runtime'];
   npm: Awaited<ReturnType<typeof import('almostnode').createContainer>>['npm'];
   serverBridge: Awaited<ReturnType<typeof import('almostnode').createContainer>>['serverBridge'];
@@ -283,9 +225,13 @@ export type ZenContainer = {
   on: (event: string, listener: (...args: unknown[]) => void) => void;
 };
 
-// ─── createContainer ────────────────────────────────────────────────────────
+// ─── configureZenFS ─────────────────────────────────────────────────────────
 
-export async function createContainer(config: ContainerConfig): Promise<ZenContainer> {
+/**
+ * Build the mount table and call @zenfs/core configure().
+ * Idempotent: if backends are already configured the call is skipped.
+ */
+export async function configureZenFS(config: ContainerConfig): Promise<ZenVFS> {
   const mounts = validateConfig(config);
   const zenfsMounts: Record<string, any> = {};
   const strict = config.strict ?? false;
@@ -321,13 +267,19 @@ export async function createContainer(config: ContainerConfig): Promise<ZenConta
     }
   }
 
+  return new ZenVFS(zenfsMounts);
+}
+
+// ─── createContainer ────────────────────────────────────────────────────────
+
+/** Build a container synchronously. Call configureZenFS() first. */
+export function createContainer(vfs: VirtualFS, opts?: ContainerOptions): ZenContainer {
   // Build the container from scratch — all pieces get the ZenVFS directly.
-  const vfs = new ZenVFS(mounts);
-  const runtime = new Runtime(vfs as unknown as VirtualFS, config.containerOptions);
-  const npm = new PackageManager(vfs as unknown as VirtualFS);
+  const runtime = new Runtime(vfs, opts);
+  const npm = new PackageManager(vfs);
   const serverBridge = getServerBridge({
-    baseUrl: config.containerOptions?.baseUrl,
-    onServerReady: config.containerOptions?.onServerReady,
+    baseUrl: opts?.baseUrl,
+    onServerReady: opts?.onServerReady,
   });
 
   return {
