@@ -11,7 +11,7 @@ Browser-based terminal emulator with a virtual file system, Node.js runtime, and
 - **Node.js runtime** — execute JavaScript and npm packages in the browser via almostnode
 - **npm support** — `npm install`, `npm run`, `npm init`, `npm ls` from the npm registry directly into the VFS
 - **npx** — execute npm package binaries on-the-fly with local → cache → download resolution
-- **SSH client** — in-browser SSH via `ssh2` with full crypto (ECDH, AES, RSA, ECDSA) running in pure JavaScript
+- **SSH client** — in-browser SSH via `ssh2` with full **end-to-end encryption** (ECDH key exchange, AES-128/256 cipher, RSA/ECDSA host verification) — all crypto runs in pure JavaScript in the browser; the Worker is a transparent TCP proxy and never sees plaintext
 - **Built-in file editor** — `edit` command opens a modal editor (Ctrl+S to save, line/byte counters)
 - **Cloudflare Worker** — SPA serving, CORS-safe HTTP proxy, WebSocket→TCP SSH tunnel
 - **Built-in commands** — `ls`, `cd`, `pwd`, `cat`, `mkdir`, `touch`, `echo`, `rm`, `cp`, `mv`, `node`, `clear`, `help`, `curl`, `ssh`, `edit`, `npx`, `cmdv`, `reload`
@@ -276,14 +276,15 @@ almosterm/
 - **Vite** — Build tool with @cloudflare/vite-plugin
 - **TypeScript** — Type safety
 
-## How SSH Works In-Browser
+## How SSH Works In-Browser (End-to-End Encrypted)
 
-The SSH client runs entirely in the browser using the `ssh2` npm package loaded into the almostnode container. All cryptographic operations — key exchange, host key verification, encryption — are implemented in pure JavaScript:
+The SSH client runs entirely in the browser using the `ssh2` npm package loaded into the almostnode container. **Encryption is end-to-end** — the Cloudflare Worker acts only as a transparent TCP proxy and never has access to plaintext credentials, commands, or data.
 
-1. **WebSocket TCP tunnel** — The Worker opens a raw TCP connection to the target host and bridges it to a browser WebSocket (`/api/connect?host=&port=`)
-2. **ssh2 in almostnode** — The `ssh2` package is installed on-demand into the almostnode container and runs client-side
+1. **WebSocket TCP tunnel** — The Worker opens a raw TCP connection to the target host and bridges it to a browser WebSocket (`/api/connect?host=&port=`). The Worker sees only encrypted SSH protocol bytes.
+2. **ssh2 in almostnode** — The `ssh2` package is installed on-demand into the almostnode container and runs client-side. Key exchange, authentication, and session encryption all happen in the browser.
 3. **Pure-JS crypto** — `crypto-js` provides AES, SHA-256, and MD5; ECDH (P-256/384/521), RSA PKCS#1 v1.5 signature verification, and ECDSA verification are implemented in pure JavaScript (see `src/hooks/useNodePolyfill.ts`)
 4. **Stream forwarding** — Keystrokes route directly from xterm.js → SSH stream; SSH output renders in the terminal
+5. **No plaintext on the wire** — The Worker never decrypts or inspects SSH traffic. Encryption keys are negotiated directly between the browser and the remote host.
 
 ## License
 
